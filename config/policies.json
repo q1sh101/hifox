@@ -1,0 +1,97 @@
+{
+  "policies": {
+
+    "ExtensionSettings": {
+
+      "*": {
+        "installation_mode": "blocked",
+        "install_sources": ["https://addons.mozilla.org/"],
+        "blocked_install_message": "extensions must be added to policies.json - not installed manually"
+      },
+
+      "uBlock0@raymondhill.net": {
+        "installation_mode": "force_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+      }
+
+    },
+
+    "InstallAddonsPermission": {
+      "Default": false
+    },
+
+    "BlockAboutProfiles": true,
+    "BlockAboutSupport": true,
+
+    "DisableSetDesktopBackground": true,
+    "DisableProfileImport": true,
+    "DisableProfileRefresh": true,
+    "DisableFeedbackCommands": true,
+    "DisableMasterPasswordCreation": true,
+    "DisablePasswordReveal": true,
+    "DisableSafeMode": true,
+
+    "BrowserDataBackup": false,
+
+    "DisableSecurityBypass": {
+      "InvalidCertificate": true,
+      "SafeBrowsing": true
+    },
+
+    "AppAutoUpdate": true,
+
+    "NoDefaultBookmarks": true,
+
+    "DisplayBookmarksToolbar": "never",
+
+    "VisualSearchEnabled": false,
+
+    "SSLVersionMin": "tls1.2",
+
+    "PostQuantumKeyAgreementEnabled": true,
+
+    "DisabledCiphers": {
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA": true,
+      "TLS_RSA_WITH_AES_128_CBC_SHA": true,
+      "TLS_RSA_WITH_AES_256_CBC_SHA": true,
+      "TLS_RSA_WITH_AES_128_GCM_SHA256": true,
+      "TLS_RSA_WITH_AES_256_GCM_SHA384": true,
+      "TLS_DHE_RSA_WITH_AES_128_CBC_SHA": true,
+      "TLS_DHE_RSA_WITH_AES_256_CBC_SHA": true,
+      "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA": true,
+      "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA": true,
+      "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA": true,
+      "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA": true
+    },
+
+    "SkipTermsOfUse": true,
+
+    "PDFjs": {
+      "Enabled": true,
+      "EnablePermissions": false
+    },
+
+    "PopupBlocking": {
+      "Default": true,
+      "Locked": true
+    },
+
+    "PictureInPicture": {
+      "Enabled": false,
+      "Locked": true
+    },
+
+    "SearchEngines": {
+      "Default": "DuckDuckGo",
+      "DefaultPrivate": "DuckDuckGo",
+      "PreventInstalls": true
+    },
+
+    "ExtensionUpdate": true,
+
+    "PrintingEnabled": false,
+
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": ""
+  }
+}
