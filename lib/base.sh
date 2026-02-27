@@ -181,3 +181,22 @@ _can_sudo_chattr() {
   fi
   $_CHATTR_OK
 }
+
+# --- profile paths (all: profiles.ini -> glob fallback) ---
+_all_profile_paths() {
+  local profiles_dir="$1"
+  local paths
+  paths=$(_list_profile_paths "$profiles_dir" 2>/dev/null) || true
+  if [[ -n "$paths" ]]; then
+    printf '%s\n' "$paths"
+    return
+  fi
+  _find_profile "$profiles_dir" 2>/dev/null
+}
+
+# --- kill all Firefox variants ---
+_kill_firefox() {
+  pkill firefox 2>/dev/null || true
+  pkill firefox-esr 2>/dev/null || true
+  flatpak kill org.mozilla.firefox 2>/dev/null || true
+}

@@ -29,7 +29,6 @@ case "$cmd" in
 
     _save_target "$target"
     ok "target: $target"
-
     hifox_deploy
 
     _bin="${HOME}/.local/bin"
@@ -44,10 +43,17 @@ case "$cmd" in
     hifox_deploy
     ;;
 
+  verify)
+    _require_firefox
+    source "${_dir}/lib/verify.sh"
+    _hifox_verify
+    ;;
+
   *)
     log "usage: hifox <command>"
     log "  install [--flatpak|--standard]"
     log "  deploy"
+    log "  verify"
     exit 1
     ;;
 esac
