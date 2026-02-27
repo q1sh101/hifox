@@ -46,6 +46,47 @@ _list_installations() {
     echo "standard|${HOME}/.mozilla/firefox|/etc/firefox/policies|${idir}"
   fi
 }
+
+# --- target persistence ---
+_target_file() { echo "${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/target"; }
+
+_save_target() {
+  local f
+  f="$(_target_file)"
+  mkdir -p "$(dirname "$f")"
+  printf '%s\n' "$1" > "$f"
+}
+
+_read_target() {
+  local f
+  f="$(_target_file)"
+  [[ -f "$f" ]] && cat "$f" || echo "all"
+}
+
+# filtered by saved target (used by all commands)
+_active_installations() {
+  local target
+  target="$(_read_target)"
+  if [[ "$target" == "all" ]]; then
+    _list_installations
+  else
+    _list_installations | grep "^${target}|" || true
+  fi
+}
+
+_require_firefox() {
+  local installs
+  installs=$(_active_installations)
+  if [[ -z "$installs" ]]; then
+    local target
+    target="$(_read_target)"
+    if [[ "$target" == "all" ]]; then
+      die "no Firefox found (checked Flatpak + /usr/lib)"
+    else
+      die "no $target Firefox found - run: hifox install"
+    fi
+  fi
+}
 # --- file operations (sudo fallback for system dirs) ---
 _ensure_dir() {
   local d="$1"
@@ -122,4 +163,9 @@ _list_profile_paths() {
     /^IsRelative=/ { r=$2 }
     END { if(p!="") print (r=="0" ? p : pd"/"p) }
   ' "$ini"
+}
+
+# --- autoconfig generation ---
+_generate_autoconfig() {
+  cat "${_dir}/config/global_lockprefs.cfg"
 }
