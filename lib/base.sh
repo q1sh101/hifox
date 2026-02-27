@@ -169,3 +169,15 @@ _list_profile_paths() {
 _generate_autoconfig() {
   cat "${_dir}/config/global_lockprefs.cfg"
 }
+
+# --- chattr capability (cached, single probe per session) ---
+_can_sudo_chattr() {
+  if [[ -z "${_CHATTR_PROBED:-}" ]]; then
+    _CHATTR_PROBED=1
+    _CHATTR_OK=false
+    local _out
+    _out=$(LC_ALL=C sudo -n chattr 2>&1) || true
+    [[ "$_out" == *"Usage"* ]] && _CHATTR_OK=true
+  fi
+  $_CHATTR_OK
+}

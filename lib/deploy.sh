@@ -14,15 +14,32 @@ _deploy_policies() {
   fi
 
   _ensure_dir "$policies_dir" || die "cannot create $policies_dir"
-  _install_file "$src" "${policies_dir}/policies.json" \
-    || die "cannot write ${policies_dir}/policies.json"
+
+  local can_chattr=false
+  _can_sudo_chattr && can_chattr=true
+
+  if [[ -f "${policies_dir}/policies.json" ]] && $can_chattr; then
+    sudo -n chattr -i "${policies_dir}/policies.json" 2>/dev/null || true
+  fi
+
+  if ! _install_file "$src" "${policies_dir}/policies.json"; then
+    if $can_chattr && [[ -f "${policies_dir}/policies.json" ]]; then
+      sudo -n chattr +i "${policies_dir}/policies.json" 2>/dev/null || true
+    fi
+    die "cannot write ${policies_dir}/policies.json"
+  fi
+
+  local immutable=""
+  if $can_chattr && sudo -n chattr +i "${policies_dir}/policies.json" 2>/dev/null; then
+    immutable=", immutable"
+  fi
 
   local count="?"
   if command -v python3 &>/dev/null; then
     count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('policies',{})))" \
       "$src" 2>/dev/null || echo "?")
   fi
-  ok "policies.json (${count} policies)"
+  ok "policies.json (${count} policies${immutable})"
 }
 
 # --- user.js ---
@@ -34,11 +51,29 @@ _deploy_userjs() {
   local count deployed=0
   count=$(grep -c 'user_pref' "$src" 2>/dev/null || echo "?")
 
+  local can_chattr=false
+  _can_sudo_chattr && can_chattr=true
+
   local profile target
   while IFS= read -r profile; do
     [[ -d "$profile" ]] || continue
     target="${profile}/user.js"
-    cp "$src" "$target" 2>/dev/null || { warn "cannot copy user.js to $(basename "$profile")"; continue; }
+
+    if [[ -f "$target" ]] && $can_chattr; then
+      sudo -n chattr -i "$target" 2>/dev/null || true
+    fi
+
+    if ! cp "$src" "$target" 2>/dev/null; then
+      if $can_chattr && [[ -f "$target" ]]; then
+        sudo -n chattr +i "$target" 2>/dev/null || true
+      fi
+      warn "cannot copy user.js to $(basename "$profile")"
+      continue
+    fi
+
+    if $can_chattr; then
+      sudo -n chattr +i "$target" 2>/dev/null || true
+    fi
     ((deployed++)) || true
   done < <(_list_profile_paths "$profiles_dir" 2>/dev/null || _find_profile "$profiles_dir" 2>/dev/null)
 
@@ -46,7 +81,10 @@ _deploy_userjs() {
     warn "no profile in $profiles_dir - launch Firefox first"
     return 0
   fi
-  ok "user.js -> ${deployed} profiles (${count} prefs)"
+
+  local immutable=""
+  $can_chattr && immutable=", immutable"
+  ok "user.js -> ${deployed} profiles (${count} prefs${immutable})"
 }
 
 # --- autoconfig ---
