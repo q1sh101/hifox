@@ -134,5 +134,6 @@ hifox_deploy() {
   if $had_error; then
     die "some installations failed - see above"
   fi
+  hifox_clean
   log "done - restart Firefox"
 }
