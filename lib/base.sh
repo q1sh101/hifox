@@ -116,6 +116,8 @@ _desktop_dir() {
   echo "${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
 }
 
+_unit_dir() { echo "${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"; }
+
 
 # --- profiles ---
 _find_profile() {
@@ -182,7 +184,7 @@ _can_sudo_chattr() {
   $_CHATTR_OK
 }
 
-# --- profile paths (all: profiles.ini -> glob fallback) ---
+# --- profile paths (all: profiles.ini → glob fallback) ---
 _all_profile_paths() {
   local profiles_dir="$1"
   local paths
