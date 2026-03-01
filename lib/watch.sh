@@ -38,6 +38,7 @@ EOF
     local f
     for f in "${_dir}/config"/*; do
       [[ -f "$f" ]] || continue
+      [[ "$(basename "$f")" == "generated_pref_dump.txt" ]] && continue
       echo "PathModified=$f"
     done
     done
@@ -75,6 +76,7 @@ EOF
       local _prof_path
       while IFS= read -r _prof_path; do
         [[ -d "$_prof_path" ]] || continue
+        echo "PathChanged=${_prof_path}/generated_pref_dump.txt"
         echo "PathChanged=${_prof_path}/user.js"
       done < <(_all_profile_paths "$_pdir")
     done < <(_active_installations)

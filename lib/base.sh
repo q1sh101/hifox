@@ -124,9 +124,21 @@ _find_profile() {
   local profiles_dir="$1"
   [[ -d "$profiles_dir" ]] || return 1
 
-  # prefer profiles.ini: find [Profile*] section marked Default=1
   local ini="$profiles_dir/profiles.ini"
   if [[ -f "$ini" ]]; then
+    # 1st priority: [Install*] section - Firefox's actual active profile
+    local install_default
+    install_default=$(awk -F= '
+      /^\[Install/ { inst=1; next }
+      /^\[/ { inst=0 }
+      inst && /^Default=/ { print $2; exit }
+    ' "$ini" 2>/dev/null) || true
+    if [[ -n "$install_default" ]]; then
+      local resolved="$profiles_dir/$install_default"
+      [[ -d "$resolved" ]] && echo "$resolved" && return 0
+    fi
+
+    # 2nd priority: [Profile*] section marked Default=1
     local default_path is_rel
     read -r default_path is_rel < <(awk -F= '
       /^\[Profile/ { if(p && d) { print p, r; exit } p=""; d=0; r="1" }
@@ -170,6 +182,7 @@ _list_profile_paths() {
 # --- autoconfig generation ---
 _generate_autoconfig() {
   cat "${_dir}/config/global_lockprefs.cfg"
+  cat "${_dir}/config/generate_pref_dump.cfg"
 }
 
 # --- chattr capability (cached, single probe per session) ---
@@ -184,7 +197,7 @@ _can_sudo_chattr() {
   $_CHATTR_OK
 }
 
-# --- profile paths (all: profiles.ini → glob fallback) ---
+# --- profile paths (all: profiles.ini -> glob fallback) ---
 _all_profile_paths() {
   local profiles_dir="$1"
   local paths

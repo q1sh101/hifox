@@ -76,6 +76,27 @@ _hifox_verify() {
       _check_file "$uj_src" "${_prof_path}/user.js" "user.js ($(basename "$_prof_path"))"
     done < <(_all_profile_paths "$pdir")
 
+    # --- dump monitoring (auto-copy to repo when changed) ---
+    local dump_src="${profile}/generated_pref_dump.txt"
+    local dump_dst="${_dir}/config/generated_pref_dump.txt"
+    if [[ ! -s "$dump_src" ]]; then
+      failures+=("MISSING: pref dump (Firefox didn't generate it)")
+    else
+      if [[ ! -f "$dump_dst" ]] || ! diff -q "$dump_src" "$dump_dst" &>/dev/null; then
+        if cp "$dump_src" "$dump_dst" 2>/dev/null; then
+          ok "$type: pref dump updated in repo"
+          notify-send "hifox: new prefs detected" \
+            "git diff config/generated_pref_dump.txt" 2>/dev/null || true
+        fi
+      fi
+    fi
+
+    # --- dump error check ---
+    local dump_err
+    dump_err=$(grep -oP '_hifox\.pref_dump_error",\s*"\K[^"]+' "$prefs" 2>/dev/null || true)
+    if [[ -n "$dump_err" ]]; then
+      failures+=("DUMP FAILED: $dump_err")
+    fi
 
     if (( ${#failures[@]} == 0 )); then
       ok "$type: all passed (${#checks[@]} prefs + policies + autoconfig)"
