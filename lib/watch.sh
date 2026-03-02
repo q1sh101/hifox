@@ -33,7 +33,8 @@ EOF
     for f in "${_dir}/lib"/*.sh; do
       [[ -f "$f" ]] && echo "PathModified=$f"
     done
-    # detect new profile/app dirs
+    # detect new webapp dirs created under webapp/
+    echo "PathChanged=${_dir}/webapp"
     # global autoconfig source files (exclude generated artifacts)
     local f
     for f in "${_dir}/config"/*; do
@@ -41,6 +42,20 @@ EOF
       [[ "$(basename "$f")" == "generated_pref_dump.txt" ]] && continue
       echo "PathModified=$f"
     done
+    # shared webapp files (webapp.cfg)
+    for f in "${_dir}/webapp/shared"/*; do
+      [[ -f "$f" ]] && echo "PathModified=$f"
+    done
+    # per-webapp: watch dir (new files) + each existing file (content edits)
+    local wdir
+    for wdir in "${_dir}/webapp"/*/; do
+      [[ -d "$wdir" ]] || continue
+      [[ "$(basename "$wdir")" == "shared" ]] && continue
+      echo "PathChanged=${wdir%/}"
+      for f in "$wdir"*; do
+        [[ -f "$f" ]] || continue
+        echo "PathModified=$f"
+      done
     done
     echo "Unit=hifox-deploy.service"
   } > "${udir}/hifox-watch.path"

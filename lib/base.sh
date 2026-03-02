@@ -4,20 +4,20 @@
 
 # --- colors ---
 if [[ -t 1 ]] || [[ -n "${JOURNAL_STREAM:-}" ]]; then
-  _R='\033[0m'
-  _BLUE='\033[1;34m'
-  _GREEN='\033[1;32m'
-  _YELLOW='\033[1;33m'
-  _RED='\033[1;31m'
+  _r='\033[0m'
+  _blue='\033[1;34m'
+  _green='\033[1;32m'
+  _yellow='\033[1;33m'
+  _red='\033[1;31m'
 else
-  _R='' _BLUE='' _GREEN='' _YELLOW='' _RED=''
+  _r='' _blue='' _green='' _yellow='' _red=''
 fi
 
 # --- logging ---
-log()  { echo -e "  ${_BLUE}[hifox]${_R} $*"; }
-ok()   { echo -e "  ${_GREEN}[  ok ]${_R} $*"; }
-warn() { echo -e "  ${_YELLOW}[ warn]${_R} $*" >&2; }
-die()  { echo -e "  ${_RED}[error]${_R} $*" >&2; exit 1; }
+log()  { echo -e "  ${_blue}[hifox]${_r} $*"; }
+ok()   { echo -e "  ${_green}[  ok ]${_r} $*"; }
+warn() { echo -e "  ${_yellow}[ warn]${_r} $*" >&2; }
+die()  { echo -e "  ${_red}[error]${_r} $*" >&2; exit 1; }
 
 # --- installation discovery ---
 # outputs one line per install: type|profiles_dir|policies_dir|sysconfig_dir
@@ -87,6 +87,7 @@ _require_firefox() {
     fi
   fi
 }
+
 # --- file operations (sudo fallback for system dirs) ---
 _ensure_dir() {
   local d="$1"
@@ -179,25 +180,7 @@ _list_profile_paths() {
   ' "$ini"
 }
 
-# --- autoconfig generation ---
-_generate_autoconfig() {
-  cat "${_dir}/config/global_lockprefs.cfg"
-  cat "${_dir}/config/generate_pref_dump.cfg"
-}
-
-# --- chattr capability (cached, single probe per session) ---
-_can_sudo_chattr() {
-  if [[ -z "${_CHATTR_PROBED:-}" ]]; then
-    _CHATTR_PROBED=1
-    _CHATTR_OK=false
-    local _out
-    _out=$(LC_ALL=C sudo -n chattr 2>&1) || true
-    [[ "$_out" == *"Usage"* ]] && _CHATTR_OK=true
-  fi
-  $_CHATTR_OK
-}
-
-# --- profile paths (all: profiles.ini -> glob fallback) ---
+# --- profile paths (all: profiles.ini → glob fallback) ---
 _all_profile_paths() {
   local profiles_dir="$1"
   local paths
@@ -214,4 +197,58 @@ _kill_firefox() {
   pkill firefox 2>/dev/null || true
   pkill firefox-esr 2>/dev/null || true
   flatpak kill org.mozilla.firefox 2>/dev/null || true
+}
+
+# --- chattr capability (cached, single probe per session) ---
+_can_sudo_chattr() {
+  if [[ -z "${_chattr_probed:-}" ]]; then
+    _chattr_probed=1
+    _chattr_ok=false
+    # LC_ALL=C: chattr usage text is locale-dependent, force English
+    local _out
+    _out=$(LC_ALL=C sudo -n chattr 2>&1) || true
+    [[ "$_out" == *"Usage"* ]] && _chattr_ok=true
+  fi
+  $_chattr_ok
+}
+
+# --- validation ---
+_is_valid_webapp_name() {
+  local name="$1"
+  case "$name" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# --- autoconfig generation (shared by deploy + status + verify) ---
+_generate_autoconfig() {
+  # 1. lockPrefs (base hardening)
+  cat "${_dir}/config/global_lockprefs.cfg"
+
+  # 2. webapp: detection start → injection marker
+  local wcfg="${_dir}/webapp/shared/webapp.cfg"
+  awk '{print} /per-webapp overrides/{exit}' "$wcfg"
+
+  # 3. per-webapp overrides (injected between marker halves)
+  local wdir wn
+  for wdir in "${_dir}/webapp"/*/; do
+    [[ -d "$wdir" ]] || continue
+    wn=$(basename "$wdir")
+    [[ "$wn" == "shared" ]] && continue
+    _is_valid_webapp_name "$wn" || continue
+    echo "  if (profileDir === \"$wn\") {"
+    echo "    isWebapp = true;"
+    if [[ -f "$wdir/prefs.cfg" ]]; then
+      sed 's/^/    /' "$wdir/prefs.cfg"
+    fi
+    echo "  }"
+    echo ""
+  done
+
+  # 4. webapp: shared behavior + catch (after marker)
+  awk 'p; /per-webapp overrides/{p=1}' "$wcfg"
+
+  # 5. dump algorithm (diagnostics)
+  cat "${_dir}/config/generate_pref_dump.cfg"
 }

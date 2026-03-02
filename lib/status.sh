@@ -9,7 +9,7 @@ hifox_status() {
   while IFS='|' read -r type pdir poldir sdir; do
     log "$type"
 
-    # compare repo user.js hash against managed profiles
+    # compare repo user.js hash against managed profiles (default + webapps)
     log "user.js"
     local repo_hash
     repo_hash=$(sha256sum "${_dir}/config/user.js" | cut -c1-12)
@@ -20,7 +20,7 @@ hifox_status() {
         [[ -d "$profile" ]] || continue
         local name
         name="$(basename "$profile")"
-        # separate managed profiles from unmanaged
+        # separate managed (default + webapps) from unmanaged
         if [[ "$profile" != "$default_profile" ]] && [[ ! -d "${_dir}/webapp/$name" ]]; then
           ((orphan_count++)) || true
           continue

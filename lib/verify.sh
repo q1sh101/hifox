@@ -47,7 +47,7 @@ _hifox_verify() {
     local check key expected desc actual
     for check in "${checks[@]}"; do
       IFS='|' read -r key expected desc <<< "$check"
-      # check prefs.js (user_pref) first, then autoconfig.cfg base lockPrefs
+      # check prefs.js (user_pref) first, then autoconfig.cfg base lockPrefs (not indented = not webapp overrides)
       actual=$(grep -oP "user_pref\\(\"${key}\",\\s*\\K[^)]+(?=\\))" "$prefs" 2>/dev/null | tail -1 || true)
       if [[ -z "$actual" ]] && [[ -f "$ac" ]]; then
         actual=$(grep -oP "^lockPref\\(\"${key}\",\\s*\\K[^)]+(?=\\))" "$ac" 2>/dev/null | tail -1 || true)
