@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Discord
+Comment=Discord (hifox Firefox webapp, isolated profile)
+Exec=__LAUNCH_SH__ --webapp discord https://discord.com/app
+Icon=discord
+Type=Application
+Categories=Network;Chat;InstantMessaging;
+StartupWMClass=discord-web
+MimeType=x-scheme-handler/discord;

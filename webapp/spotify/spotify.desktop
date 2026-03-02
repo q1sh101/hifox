@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Spotify
+Comment=Spotify (hifox Firefox webapp, isolated profile)
+Exec=__LAUNCH_SH__ --webapp spotify https://open.spotify.com/
+Icon=spotify
+Type=Application
+Categories=AudioVideo;Audio;Music;Player;
+StartupWMClass=spotify-web
+MimeType=x-scheme-handler/spotify;
