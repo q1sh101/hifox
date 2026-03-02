@@ -1,0 +1,118 @@
+/* === TabsToolbar - branded tab strip === */
+
+#TabsToolbar {
+  min-height: 44px !important;
+  background: black !important;
+}
+
+#firefox-view-button,
+#alltabs-button,
+#tabs-newtab-button,
+.titlebar-spacer {
+  display: none !important;
+}
+
+#tabbrowser-tabs {
+  border: none !important;
+}
+
+/* single tab: favicon + title, no close button, transparent bg */
+
+.tabbrowser-tab:only-of-type .tab-close-button {
+  display: none !important;
+}
+
+.tabbrowser-tab:only-of-type .tab-background {
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  border: none !important;
+}
+
+.tabbrowser-tab:only-of-type:hover .tab-background {
+  background: transparent !important;
+}
+
+/* multi tab: first tab becomes 36px pinned icon */
+
+.tabbrowser-tab:first-of-type:not(:only-of-type) {
+  max-width: 36px !important;
+  min-width: 36px !important;
+}
+
+.tabbrowser-tab:first-of-type:not(:only-of-type) .tab-close-button,
+.tabbrowser-tab:first-of-type:not(:only-of-type) .tab-label-container {
+  display: none !important;
+}
+
+/* === nav-bar - URL + reload + uBlock only === */
+
+#nav-bar {
+  background: black !important;
+  border-top: 1px solid #1a1a1a !important;
+  margin-top: -4px !important;
+  padding-block: 0 !important;
+  max-height: 32px !important;
+}
+
+#back-button,
+#forward-button,
+#fxa-toolbar-menu-button,
+#PanelUI-button,
+#star-button-box,
+#unified-extensions-button,
+#tracking-protection-icon-container,
+#downloads-button,
+#customizableui-special-spring1,
+#customizableui-special-spring2,
+#vertical-spacer {
+  display: none !important;
+}
+
+#stop-reload-button {
+  margin-left: 5px !important;
+}
+
+#ublock0_raymondhill_net-browser-action {
+  margin-right: 5px !important;
+}
+
+/* URL bar - hide text, keep permission icons */
+
+#urlbar {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+#urlbar-input {
+  color: transparent !important;
+  pointer-events: none !important;
+}
+
+#urlbar-scheme,
+#urlbar-go-button,
+#urlbar-label-box,
+#page-action-buttons,
+#identity-icon-box {
+  display: none !important;
+}
+
+/* === context menu - hide browser-only actions === */
+
+#context-viewsource,
+#context-inspect,
+#context-inspect-a11y,
+#context-savepage,
+#context-savelink,
+#context-openlinkintab,
+#context-openlink,
+#context-openlinkprivate,
+#context-bookmarklink,
+#context-bookmarkpage,
+#context-searchselect,
+#context-searchselect-private,
+#context-viewframesource,
+#context-viewframeinfo {
+  display: none !important;
+}

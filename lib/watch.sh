@@ -42,7 +42,7 @@ EOF
       [[ "$(basename "$f")" == "generated_pref_dump.txt" ]] && continue
       echo "PathModified=$f"
     done
-    # shared webapp files (webapp.cfg)
+    # shared webapp files (webapp.css, webapp.cfg)
     for f in "${_dir}/webapp/shared"/*; do
       [[ -f "$f" ]] && echo "PathModified=$f"
     done

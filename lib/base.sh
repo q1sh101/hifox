@@ -180,7 +180,7 @@ _list_profile_paths() {
   ' "$ini"
 }
 
-# --- profile paths (all: profiles.ini → glob fallback) ---
+# --- profile paths (all: profiles.ini -> glob fallback) ---
 _all_profile_paths() {
   local profiles_dir="$1"
   local paths
@@ -226,7 +226,7 @@ _generate_autoconfig() {
   # 1. lockPrefs (base hardening)
   cat "${_dir}/config/global_lockprefs.cfg"
 
-  # 2. webapp: detection start → injection marker
+  # 2. webapp: detection start -> injection marker
   local wcfg="${_dir}/webapp/shared/webapp.cfg"
   awk '{print} /per-webapp overrides/{exit}' "$wcfg"
 

@@ -156,6 +156,7 @@ _deploy_webapp_profiles() {
   _fix_start_with_last_profile "$profiles_dir"
 
   local userjs_src="${_dir}/config/user.js"
+  local css_src="${_dir}/webapp/shared/webapp.css"
 
   local can_chattr=false
   _can_sudo_chattr && can_chattr=true
@@ -179,7 +180,9 @@ _deploy_webapp_profiles() {
       if [[ -f "$wprofile/user.js" ]] && $can_chattr; then
         sudo -n chattr -i "$wprofile/user.js" 2>/dev/null || true
       fi
-      if cp "$userjs_src" "$wprofile/user.js"; then
+      if mkdir -p "$wprofile/chrome" \
+        && cp "$css_src" "$wprofile/chrome/userChrome.css" \
+        && cp "$userjs_src" "$wprofile/user.js"; then
         if $can_chattr; then sudo -n chattr +i "$wprofile/user.js" 2>/dev/null || true; fi
         ok "$wname: profile ready"
       else
