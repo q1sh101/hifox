@@ -57,6 +57,7 @@
 
 #back-button,
 #forward-button,
+#sidebar-button,
 #fxa-toolbar-menu-button,
 #PanelUI-button,
 #star-button-box,
@@ -79,10 +80,12 @@
 
 /* URL bar - hide text, keep permission icons */
 
-#urlbar {
+#urlbar,
+#urlbar[focused="true"] {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
+  outline: none !important;
 }
 
 #urlbar-input {

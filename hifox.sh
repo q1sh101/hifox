@@ -33,12 +33,13 @@ case "$cmd" in
     _save_target "$target"
     ok "target: $target"
     hifox_deploy
-    hifox_watch_install
     _bin="${HOME}/.local/bin"
     mkdir -p "$_bin"
     ln -sf "${_dir}/hifox.sh" "${_bin}/hifox"
     [[ ":$PATH:" == *":${_bin}:"* ]] || warn "add ${_bin} to PATH"
     ok "command: hifox"
+    hifox_watch_install
+    log "done - launch Firefox, close it, launch again"
     ;;
   deploy)
     [[ $# -le 1 ]] || die "deploy takes no arguments"
@@ -57,7 +58,7 @@ case "$cmd" in
     ;;
   logs)
     command -v journalctl &>/dev/null || die "journalctl not found"
-    exec journalctl --user -n 50 -f -o cat -u hifox-watch.path -u hifox-deploy.service
+    exec journalctl --user -n 50 -f -o cat -u hifox-watch.path -u hifox-deploy.service -u hifox-verify.service
     ;;
   watch)
     sub="${2:-}"
@@ -72,10 +73,10 @@ case "$cmd" in
     log "usage: hifox <command>"
     log "  install [--flatpak|--standard]  first-time setup (saves target, deploys, starts watcher)"
     log "  deploy                          deploy hardening to saved target"
-    log "  verify                          check pref integrity after Firefox restart"
+    log "  verify                          check hardening integrity (prefs + files + dump)"
     log "  clean                           remove stale remnant files from profiles"
     log "  status                          show sync state between repo and live"
-    log "  logs                            follow auto-deploy output"
+    log "  logs                            follow deploy + verify output"
     log "  watch   install                 auto-deploy on repo file changes"
     log "  watch   remove                  disable auto-deploy"
     log "  watch   status                  show watcher status"

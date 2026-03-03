@@ -59,6 +59,7 @@ _clean_stale_locks
 
 if [[ "${1:-}" == "--webapp" ]]; then
   _name="${2:?webapp name required}"
+  case "$_name" in ''|*[!A-Za-z0-9._-]*) echo "error: invalid webapp name: $_name" >&2; exit 1 ;; esac
   _url="${3:-}"
   _args=(--no-remote --new-instance -P "$_name")
   [[ -n "$_url" ]] && _args+=("$_url")

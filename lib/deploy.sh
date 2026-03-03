@@ -84,6 +84,25 @@ _deploy_userjs() {
   ok "user.js -> ${deployed} profiles (${count} prefs${immutable})"
 }
 
+# --- homepage branding (default profile only) ---
+_deploy_homepage() {
+  local profiles_dir="$1"
+  local css_src="${_dir}/config/hifox.css"
+  local logo_src="${_dir}/hifox.png"
+  [[ -f "$css_src" ]] || return 0
+  [[ -f "$logo_src" ]] || return 0
+
+  local profile
+  profile="$(_find_profile "$profiles_dir")" || return 0
+  mkdir -p "$profile/chrome"
+  if cp "$css_src" "$profile/chrome/userContent.css" \
+    && cp "$logo_src" "$profile/chrome/hifox.png"; then
+    ok "homepage: hifox branding"
+  else
+    warn "homepage: copy failed"
+  fi
+}
+
 # --- autoconfig ---
 _deploy_autoconfig() {
   local sysconfig_dir="$1"
@@ -271,6 +290,7 @@ hifox_deploy() {
       _deploy_policies "$poldir"
       _deploy_userjs "$pdir"
       _deploy_autoconfig "$sdir"
+      _deploy_homepage "$pdir"
       _deploy_webapp_profiles "$pdir"
     ); then :; else
       warn "$type: deploy failed"

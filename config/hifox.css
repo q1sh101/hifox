@@ -1,0 +1,26 @@
+/* === about:home / about:newtab - hifox branded homepage === */
+
+@-moz-document url-prefix(about:newtab), url-prefix(about:home) {
+
+  /* hifox logo replaces Firefox logo */
+  .search-wrapper .logo-and-wordmark .logo {
+    background-image: url("hifox.png") !important;
+    background-size: contain !important;
+    width: 300px !important;
+    height: 200px !important;
+  }
+
+  /* hide "Firefox" wordmark */
+  .search-wrapper .logo-and-wordmark .wordmark {
+    display: none !important;
+  }
+
+  /* hide everything except search */
+  section[data-section-id="topsites"],
+  section[data-section-id="topstories"],
+  section[data-section-id="highlights"],
+  .ds-outer-wrapper-margin,
+  .SnippetBaseContainer {
+    display: none !important;
+  }
+}
