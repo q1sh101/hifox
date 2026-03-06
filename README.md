@@ -4,7 +4,7 @@
 
 <h1 align="center"><code>hifox</code></h1>
 
-<p align="center">Deterministic Firefox hardening: from repo to runtime, enforced continuously.</p>
+<p align="center">Deterministic Firefox hardening framework.<br>Not a config file - an enforcement architecture.</p>
 
 ## tl;dr + quickstart
 
@@ -35,21 +35,76 @@ commands:
 
 ## table of contents
 
-1. [install](#install)
-2. [generation](#generation)
-3. [deploy](#deploy)
-4. [startup](#startup)
-5. [automation](#automation)
-6. [verify](#verify)
-7. [status](#status)
-8. [drift detection](#drift-detection)
-9. [update detection](#update-detection)
-10. [webapp](#webapp)
-11. [webapp behavior](#webapp-behavior)
-12. [clean](#clean)
-13. [debug](#debug)
-14. [signaling](#signaling)
-15. [notes](#notes)
+1. [notes](#notes)
+2. [install](#install)
+3. [generation](#generation)
+4. [deploy](#deploy)
+5. [startup](#startup)
+6. [automation](#automation)
+7. [verify](#verify)
+8. [status](#status)
+9. [drift detection](#drift-detection)
+10. [update detection](#update-detection)
+11. [webapp](#webapp)
+12. [webapp behavior](#webapp-behavior)
+13. [clean](#clean)
+14. [debug](#debug)
+15. [signaling](#signaling)
+
+## notes
+
+```
+  config files define what to lock. the framework guarantees it stays locked.
+
+                          ENFORCEMENT PIPELINE
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+       repo (source of truth)
+        │
+        │  global_lockprefs.cfg ─── your threat model goes here
+        │  webapp/*/prefs.cfg ───── per-app overrides
+        │  policies.json ────────── policy-only features
+        │
+        ▼
+  ┌─ deploy ──────────────────────────────────────────────────────────┐
+  │                                                                   │
+  │   generate ──> assemble configs ──> push to Firefox ──> lock 🔒   │
+  │                one command. repo to runtime. nothing manual.      │
+  │                                                                   │
+  └───────────────────────────┬───────────────────────────────────────┘
+                              │
+                              ▼
+  ┌─ runtime ─────────────────────────────────────────────────────────┐
+  │                                                                   │
+  │   lockPref()    highest enforcement. browser, extensions,         │
+  │                 websites -nothing overrides. ever.                │
+  │                                                                   │
+  │   ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐     │
+  │   │    main    │ │  discord   │ │  spotify   │ │    ...     │     │
+  │   │  🔒 max    │ │  🎤 🎥     │ │  🔑 DRM    │ │  your      │     │
+  │   │   locked   │ │  unlocked  │ │  unlocked  │ │  rules     │     │
+  │   └────────────┘ └────────────┘ └────────────┘ └────────────┘     │
+  │         ╳              ╳              ╳              ╳            │
+  │              zero shared cookies, data, or state                  │
+  │                                                                   │
+  └───────────────────────────┬───────────────────────────────────────┘
+                              │
+                              ▼
+  ┌─ integrity ───────────────────────────────────────────────────────┐
+  │                                                                   │
+  │   verify        drift detected ──> kill Firefox ──> notify        │
+  │                 before damage. seconds, not hours.                │
+  │                                                                   │
+  │   update        new pref appears in Firefox ──> diff ──> notify   │
+  │   detection     you know before it runs.                          │
+  │                                                                   │
+  └───────────────────────────────────────────────────────────────────┘
+
+  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+
+  ships with hundreds of locks. empty it. write your own.
+  the architecture is the same. your threat model. your rules.
+```
 
 ## install
 
@@ -200,7 +255,8 @@ commands:
   ✅ hardened
 
   user.js is empty (canary only) - all prefs managed by lockPref in autoconfig.cfg.
-  lockPref > user_pref > pref: nothing can override autoconfig.cfg values.
+  pref layer order: lockPref > user_pref > pref.
+  policies run after autoconfig and can still override overlapping settings.
 ```
 
 ## automation
@@ -573,29 +629,4 @@ commands:
   │  _autoconfig.error    ── diagnostic only (not checked)           │
   │  _hifox.pref_dump     ── diagnostic only (not checked)           │
   └──────────────────────────────────────────────────────────────────┘
-```
-
-## notes
-
-```
-  adding a webapp:
-    mkdir webapp/myapp
-    add myapp.desktop, myapp.png, prefs.cfg (optional)
-    hifox deploy
-
-  responding to a pref dump change:
-    notification -> git diff config/generated_pref_dump.txt
-    threat? -> lockPref in global_lockprefs.cfg -> hifox deploy
-
-  when verify kills Firefox:
-    hifox deploy -> restart Firefox
-    if persists: hifox status (find what drifted)
-
-  immutable locking:
-    needs passwordless sudo (sudo -n chattr)
-    without it: everything works, files stay writable
-
-  dependencies:
-    bash, systemd (user units), flatpak or standard Firefox
-    optional: sudo -n (chattr), python3 (JSON validation)
 ```

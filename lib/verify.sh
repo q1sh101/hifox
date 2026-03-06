@@ -36,10 +36,26 @@ _hifox_verify() {
 
     local checks=(
       '_user_js.canary|"hifox"|canary'
+      'privacy.resistFingerprinting|true|fingerprint resistance'
+      'browser.cache.disk.enable|false|disk cache disabled'
+      'security.ssl.require_safe_negotiation|true|safe TLS negotiation'
+      'media.peerconnection.enabled|false|WebRTC disabled'
+      'network.http.speculative-parallel-limit|0|speculative connections blocked'
+      'browser.sessionstore.resume_from_crash|false|crash recovery disk writes'
+      'permissions.memory_only|true|permissions RAM-only'
+      'privacy.bounceTrackingProtection.mode|1|bounce tracking protection'
+      'privacy.query_stripping.enabled|true|query parameter stripping'
       'network.cookie.cookieBehavior|5|dFPI cookie isolation'
       'dom.security.https_only_mode|true|HTTPS-only mode'
+      'toolkit.telemetry.enabled|false|telemetry disabled'
+      'network.dns.echconfig.enabled|true|encrypted client hello'
       'media.eme.enabled|false|DRM disabled'
+      'webgl.disabled|true|WebGL disabled'
       'privacy.sanitize.sanitizeOnShutdown|true|shutdown sanitization'
+      'geo.enabled|false|geolocation disabled'
+      'app.normandy.enabled|false|remote experiments disabled'
+      'security.OCSP.require|true|OCSP hard-fail'
+      'security.enterprise_roots.enabled|false|system CA import blocked'
     )
 
     local failures=()
