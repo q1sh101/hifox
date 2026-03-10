@@ -177,7 +177,12 @@ _list_profile_paths() {
     /^Path=/ { p=$2 }
     /^IsRelative=/ { r=$2 }
     END { if(p!="") print (r=="0" ? p : pd"/"p) }
-  ' "$ini"
+  ' "$ini" | while IFS= read -r _p; do
+    # skip paths that escape profiles dir (corrupted profiles.ini)
+    [[ "$_p" == *".."* ]] && continue
+    [[ "$_p" == "${profiles_dir}/"* ]] || continue
+    printf '%s\n' "$_p"
+  done
 }
 
 # --- profile paths (all: profiles.ini -> glob fallback) ---
@@ -210,6 +215,27 @@ _can_sudo_chattr() {
     [[ "$_out" == *"Usage"* ]] && _chattr_ok=true
   fi
   $_chattr_ok
+}
+
+# --- chattr unlock (passwordless -> interactive fallback) ---
+_chattr_unlock() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  if _can_sudo_chattr; then
+    sudo -n chattr -i "$f" 2>/dev/null || true
+    return 0
+  fi
+  # no passwordless sudo - check if file is actually immutable before prompting
+  if lsattr "$f" 2>/dev/null | awk '{print $1}' | grep -q 'i'; then
+    echo "  [hifox] sudo required to unlock immutable: $(basename "$f")" >&2
+    if (exec </dev/tty) 2>/dev/null; then
+      sudo chattr -i "$f" </dev/tty || return 1
+    else
+      warn "no terminal for sudo - run manually: sudo chattr -i $f"
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # --- validation ---

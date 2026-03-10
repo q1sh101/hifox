@@ -64,9 +64,9 @@ _hifox_verify() {
     for check in "${checks[@]}"; do
       IFS='|' read -r key expected desc <<< "$check"
       # check prefs.js (user_pref) first, then autoconfig.cfg base lockPrefs (not indented = not webapp overrides)
-      actual=$(grep -oP "user_pref\\(\"${key}\",\\s*\\K[^)]+(?=\\))" "$prefs" 2>/dev/null | tail -1 || true)
+      actual=$(sed -n "s/^user_pref(\"${key}\", *\([^)]*\));.*/\1/p" "$prefs" 2>/dev/null | tail -1 || true)
       if [[ -z "$actual" ]] && [[ -f "$ac" ]]; then
-        actual=$(grep -oP "^lockPref\\(\"${key}\",\\s*\\K[^)]+(?=\\))" "$ac" 2>/dev/null | tail -1 || true)
+        actual=$(sed -n "s/^lockPref(\"${key}\", *\([^)]*\));.*/\1/p" "$ac" 2>/dev/null | tail -1 || true)
       fi
       if [[ -z "$actual" ]]; then
         failures+=("MISSING: $desc")
@@ -109,7 +109,7 @@ _hifox_verify() {
 
     # --- dump error check ---
     local dump_err
-    dump_err=$(grep -oP '_hifox\.pref_dump_error",\s*"\K[^"]+' "$prefs" 2>/dev/null || true)
+    dump_err=$(sed -n 's/.*_hifox\.pref_dump_error", *"\([^"]*\)".*/\1/p' "$prefs" 2>/dev/null || true)
     if [[ -n "$dump_err" ]]; then
       failures+=("DUMP FAILED: $dump_err")
     fi

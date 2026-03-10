@@ -7,6 +7,7 @@ _dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 source "${_dir}/lib/base.sh"
 source "${_dir}/lib/deploy.sh"
 source "${_dir}/lib/clean.sh"
+source "${_dir}/lib/purge.sh"
 source "${_dir}/lib/status.sh"
 source "${_dir}/lib/watch.sh"
 
@@ -53,6 +54,9 @@ case "$cmd" in
   clean)
     hifox_clean
     ;;
+  purge)
+    hifox_purge "${2:-}"
+    ;;
   status)
     hifox_status
     ;;
@@ -75,6 +79,7 @@ case "$cmd" in
     log "  deploy                          deploy hardening to saved target"
     log "  verify                          check hardening integrity (prefs + files + dump)"
     log "  clean                           remove stale remnant files from profiles"
+    log "  purge [--flatpak|--standard]    nuclear wipe: delete ALL data from profiles"
     log "  status                          show sync state between repo and live"
     log "  logs                            follow deploy + verify output"
     log "  watch   install                 auto-deploy on repo file changes"

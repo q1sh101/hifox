@@ -20,9 +20,8 @@ _deploy_policies() {
   local can_chattr=false
   _can_sudo_chattr && can_chattr=true
 
-  if [[ -f "${policies_dir}/policies.json" ]] && $can_chattr; then
-    sudo -n chattr -i "${policies_dir}/policies.json" 2>/dev/null || true
-  fi
+  _chattr_unlock "${policies_dir}/policies.json" \
+    || die "cannot unlock ${policies_dir}/policies.json (immutable)"
   # re-lock even on failure - never leave policies.json writable
   if ! _install_file "$src" "${policies_dir}/policies.json"; then
     if $can_chattr && [[ -f "${policies_dir}/policies.json" ]]; then
@@ -57,12 +56,13 @@ _deploy_userjs() {
   _can_sudo_chattr && can_chattr=true
 
   # deploy to all known profiles (matches status.sh coverage)
-  local profile target
+  local profile target found=0
   while IFS= read -r profile; do
     [[ -d "$profile" ]] || continue
+    ((found++)) || true
     target="${profile}/user.js"
-    if [[ -f "$target" ]] && $can_chattr; then
-      sudo -n chattr -i "$target" 2>/dev/null || true
+    if ! _chattr_unlock "$target"; then
+      warn "cannot unlock user.js in $(basename "$profile") (immutable)"; continue
     fi
     # re-lock even on failure - never leave user.js writable
     if ! cp "$src" "$target" 2>/dev/null; then
@@ -76,7 +76,11 @@ _deploy_userjs() {
   done < <(_all_profile_paths "$profiles_dir")
 
   if (( deployed == 0 )); then
-    warn "no profile in $profiles_dir - launch Firefox first"
+    if (( found == 0 )); then
+      warn "no profile in $profiles_dir - launch Firefox first"
+    else
+      warn "user.js: $found profiles found but none writable"
+    fi
     return 0
   fi
   local immutable=""
@@ -196,9 +200,7 @@ _deploy_webapp_profiles() {
 
     if [[ -d "$wprofile" ]]; then
       # unlock before overwrite (same protection as main profiles)
-      if [[ -f "$wprofile/user.js" ]] && $can_chattr; then
-        sudo -n chattr -i "$wprofile/user.js" 2>/dev/null || true
-      fi
+      _chattr_unlock "$wprofile/user.js" 2>/dev/null || true
       if mkdir -p "$wprofile/chrome" \
         && cp "$css_src" "$wprofile/chrome/userChrome.css" \
         && cp "$userjs_src" "$wprofile/user.js"; then

@@ -29,6 +29,7 @@ commands:
   hifox verify                                   check hardening integrity (prefs + files + dump)
   hifox status                                   show sync state (repo vs live)
   hifox clean                                    remove stale remnant files from profiles
+  hifox purge [--flatpak|--standard]             nuclear wipe: delete ALL data from profiles
   hifox logs                                     follow deploy + verify output
   hifox watch install|remove|status              manage file watcher (systemd)
 ```
@@ -47,7 +48,7 @@ commands:
 10. [update detection](#update-detection)
 11. [webapp](#webapp)
 12. [webapp behavior](#webapp-behavior)
-13. [clean](#clean)
+13. [clean + purge](#clean--purge)
 14. [debug](#debug)
 15. [signaling](#signaling)
 
@@ -552,23 +553,49 @@ commands:
   └──────────────────────────────────────────────────────┘
 ```
 
-## clean
+## clean + purge
 
 ```
-  hardening blocks features via prefs. Firefox still creates files on disk.
-  clean removes what prefs can't prevent.
+  two levels of cleanup. clean: remove remnants. purge: remove everything.
 
-  hifox clean (auto-runs at end of successful deploy)
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  clean                          │  purge                        │
+  │  safe, runs after deploy        │  destructive, interactive     │
+  ├─────────────────────────────────┼───────────────────────────────┤
+  │  telemetry, crashes,            │  ALL data: cookies, history,  │
+  │  experiments, caches,           │  logins, sessions, cache,     │
+  │  plugins, forms, sync,          │  certificates, extensions,    │
+  │  suggestions, permissions       │  everything                   │
+  ├─────────────────────────────────┼───────────────────────────────┤
+  │  keeps: everything else         │  keeps: user.js, chrome/,     │
+  │                                 │  profiles.ini, installs.ini   │
+  ├─────────────────────────────────┼───────────────────────────────┤
+  │  no confirm needed              │  [y/N] confirm required       │
+  │  auto-runs at end of deploy     │  manual only                  │
+  └─────────────────────────────────┴───────────────────────────────┘
+
+  hifox clean
+       └── for each profile: delete known remnant files
+
+  hifox purge [--flatpak|--standard]
        │
-       └── for each profile:
-           │
-           ├── telemetry ──── pings, archives, timing, ad categories
-           ├── experiments ── shield, experiment store
-           ├── caches ─────── disk, startup, sync storage, alt-svc
-           ├── crashes ────── reports, minidumps
-           ├── plugins ────── Widevine, OpenH264
-           └── misc ───────── forms, permissions, suggestions,
-                              bookmarks, notifications, sync (weave)
+       ├── confirm ──── [y/N] (no piped input)
+       ├── kill Firefox
+       ├── pause verify watcher
+       │
+       ├── per profile (main + webapps):
+       │   delete everything EXCEPT user.js + chrome/
+       │
+       ├── external data (whitelist what to KEEP, not what to delete):
+       │   flatpak: nuke ~/.var/app/org.mozilla.firefox/* except config/
+       │   standard: nuke ~/.cache/mozilla/
+       │
+       ├── /tmp: Browser Toolbox temp profiles
+       ├── resume verify watcher
+       │
+       └── next: hifox deploy ──> hardening reapplied
+
+  purge works with or without hifox hardening installed.
 ```
 
 ## debug
