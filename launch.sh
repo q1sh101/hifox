@@ -59,7 +59,12 @@ _clean_stale_locks
 
 if [[ "${1:-}" == "--webapp" ]]; then
   _name="${2:?webapp name required}"
-  case "$_name" in ''|*[!A-Za-z0-9._-]*) echo "error: invalid webapp name: $_name" >&2; exit 1 ;; esac
+  case "$_name" in ''|.*|*[!A-Za-z0-9._-]*) echo "error: invalid webapp name: $_name" >&2; exit 1 ;; esac
+
+  # launcher hook: any external tool can override webapp launch
+  _hook="${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/hooks/webapp/${_name}"
+  [[ -x "$_hook" ]] && exec "$_hook" "${@:4}"
+
   _url="${3:-}"
   _args=(--no-remote --new-instance -P "$_name")
   [[ -n "$_url" ]] && _args+=("$_url")
