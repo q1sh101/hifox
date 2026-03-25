@@ -14,6 +14,17 @@ _hifox_verify() {
     fi
   }
 
+  _older_than_any() {
+    local probe="$1"
+    shift
+    local other
+    for other in "$@"; do
+      [[ -e "$other" ]] || continue
+      [[ "$probe" -ot "$other" ]] && return 0
+    done
+    return 1
+  }
+
   local type pdir poldir sdir
   while IFS='|' read -r type pdir poldir sdir; do
     log "verifying $type..."
@@ -34,9 +45,40 @@ _hifox_verify() {
       continue
     fi
 
+    local failures=()
+    local ac="${sdir}/autoconfig.cfg"
+    local ac_js="${sdir}/defaults/pref/autoconfig.js"
+    local main_user_js="${profile}/user.js"
+
+    # --- deploy integrity (always check) ---
+    _check_file "${_dir}/config/policies.json" "${poldir}/policies.json" "policies.json"
+    _check_file "${_dir}/config/autoconfig.js" "$ac_js" "autoconfig.js"
+    if [[ ! -f "${sdir}/autoconfig.cfg" ]]; then
+      failures+=("MISSING: autoconfig.cfg")
+    elif ! diff -q <(_generate_autoconfig) "${sdir}/autoconfig.cfg" &>/dev/null; then
+      failures+=("DRIFT: autoconfig.cfg")
+    fi
+
+    local uj_src="${_dir}/config/user.js"
+    local _prof_path
+    while IFS= read -r _prof_path; do
+      [[ -d "$_prof_path" ]] || continue
+      _check_file "$uj_src" "${_prof_path}/user.js" "user.js ($(basename "$_prof_path"))"
+    done < <(_all_profile_paths "$pdir")
+
+    # If deployed files are newer than prefs.js, Firefox has not restarted into this config yet.
+    if (( ${#failures[@]} == 0 )) \
+      && _older_than_any "$prefs" "$main_user_js" "$ac_js" "$ac" "${poldir}/policies.json"; then
+      ok "$type: deploy staged - restart Firefox to apply"
+      continue
+    fi
+
     local checks=(
       '_user_js.canary|"hifox"|canary'
-      'privacy.resistFingerprinting|true|fingerprint resistance'
+      'privacy.fingerprintingProtection|true|fingerprint protection'
+      'privacy.fingerprintingProtection.overrides|"+AllTargets,-CSSPrefersColorScheme"|fingerprint overrides'
+      'privacy.fingerprintingProtection.remoteOverrides.enabled|false|remote fingerprint overrides disabled'
+      'privacy.resistFingerprinting|false|RFP disabled (using FPP instead)'
       'browser.cache.disk.enable|false|disk cache disabled'
       'security.ssl.require_safe_negotiation|true|safe TLS negotiation'
       'media.peerconnection.enabled|false|WebRTC disabled'
@@ -58,8 +100,6 @@ _hifox_verify() {
       'security.enterprise_roots.enabled|false|system CA import blocked'
     )
 
-    local failures=()
-    local ac="${sdir}/autoconfig.cfg"
     local check key expected desc actual
     for check in "${checks[@]}"; do
       IFS='|' read -r key expected desc <<< "$check"
@@ -74,23 +114,6 @@ _hifox_verify() {
         failures+=("WRONG: $desc (got: $actual)")
       fi
     done
-
-    # --- deploy integrity ---
-    _check_file "${_dir}/config/policies.json" "${poldir}/policies.json" "policies.json"
-    _check_file "${_dir}/config/autoconfig.js" "${sdir}/defaults/pref/autoconfig.js" "autoconfig.js"
-    if [[ ! -f "${sdir}/autoconfig.cfg" ]]; then
-      failures+=("MISSING: autoconfig.cfg")
-    elif ! diff -q <(_generate_autoconfig) "${sdir}/autoconfig.cfg" &>/dev/null; then
-      failures+=("DRIFT: autoconfig.cfg")
-    fi
-
-    # --- user.js integrity (all profiles) ---
-    local uj_src="${_dir}/config/user.js"
-    local _prof_path
-    while IFS= read -r _prof_path; do
-      [[ -d "$_prof_path" ]] || continue
-      _check_file "$uj_src" "${_prof_path}/user.js" "user.js ($(basename "$_prof_path"))"
-    done < <(_all_profile_paths "$pdir")
 
     # --- dump monitoring (auto-copy to repo when changed) ---
     local dump_src="${profile}/generated_pref_dump.txt"

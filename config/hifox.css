@@ -2,10 +2,6 @@
 
 @-moz-document url-prefix(about:newtab), url-prefix(about:home) {
 
-  body {
-    background-color: #000000 !important;
-  }
-
   /* hifox logo replaces Firefox logo */
   .search-wrapper .logo-and-wordmark .logo {
     background-image: url("hifox.png") !important;
