@@ -27,6 +27,18 @@ _find_firefox() {
 _ff=$(_find_firefox) || { echo "error: no Firefox found" >&2; exit 1; }
 
 _run() {
+  # shellcheck disable=SC2086  # word-split intentional
+  if [[ -n "${HIFOX_LAUNCHER:-}" ]]; then
+    exec ${HIFOX_LAUNCHER} "$@"
+  elif [[ "${_ff}" == "flatpak" ]]; then
+    exec flatpak run org.mozilla.firefox "$@"
+  else
+    exec "${_ff}" "$@"
+  fi
+}
+
+_run_direct() {
+  # Global launch wrappers have no per-webapp context; hooks handle that.
   if [[ "${_ff}" == "flatpak" ]]; then
     exec flatpak run org.mozilla.firefox "$@"
   else
@@ -69,14 +81,14 @@ if [[ "${1:-}" == "--webapp" ]]; then
   case "${_name}" in ''|.*|*[!A-Za-z0-9._-]*) echo "error: invalid webapp name: ${_name}" >&2; exit 1 ;; esac
 
   _hook="${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/hooks/webapp/${_name}"
-  [[ -x "${_hook}" ]] && exec "${_hook}" "${@:4}"
+  [[ -x "${_hook}" ]] && exec "${_hook}" "${@:3}"
 
   _url="${3:-}"
   _args=(--no-remote --new-instance -P "${_name}")
   [[ -n "${_url}" ]] && _args+=("${_url}")
   export MOZ_APP_REMOTINGNAME="${_name}-web"
   _args+=(--name "${_name}-web" --class "${_name}-web")
-  _run "${_args[@]}"
+  _run_direct "${_args[@]}"
 else
   _run "$@"
 fi

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Spotify
 Comment=Spotify (hifox Firefox webapp, isolated profile)
-Exec=__LAUNCH_SH__ --webapp spotify https://open.spotify.com/
+Exec=__LAUNCH_SH__ --webapp spotify https://open.spotify.com/ %u
 Icon=spotify
 Type=Application
 Categories=AudioVideo;Audio;Music;Player;

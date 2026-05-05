@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Discord
 Comment=Discord (hifox Firefox webapp, isolated profile)
-Exec=__LAUNCH_SH__ --webapp discord https://discord.com/app
+Exec=__LAUNCH_SH__ --webapp discord https://discord.com/app %u
 Icon=discord
 Type=Application
 Categories=Network;Chat;InstantMessaging;
