@@ -16,6 +16,16 @@ ok()   { echo -e "  ${_green}[  ok ]${_r} $*"; }
 warn() { echo -e "  ${_yellow}[ warn]${_r} $*" >&2; }
 die()  { echo -e "  ${_red}[error]${_r} $*" >&2; exit 1; }
 
+_require_command() {
+  local name="$1"
+  command -v "${name}" &>/dev/null || die "required command not found: ${name}"
+}
+
+_check_command() {
+  local name="$1"
+  command -v "${name}" &>/dev/null
+}
+
 _list_installations() {
   if command -v flatpak &>/dev/null && flatpak info org.mozilla.firefox &>/dev/null; then
     local arch fp_home pdir sdir

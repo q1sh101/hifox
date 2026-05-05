@@ -32,6 +32,7 @@ commands:
   hifox purge [--flatpak|--standard]             nuclear wipe: delete ALL data from profiles
   hifox logs                                     follow deploy + verify output
   hifox watch install|remove|status              manage file watcher (systemd)
+  hifox install-systemconfig                     register flatpak extension (autoconfig + policies in sandbox)
 ```
 
 ## table of contents
@@ -40,17 +41,18 @@ commands:
 2. [install](#install)
 3. [generation](#generation)
 4. [deploy](#deploy)
-5. [startup](#startup)
-6. [automation](#automation)
-7. [verify](#verify)
-8. [status](#status)
-9. [drift detection](#drift-detection)
-10. [update detection](#update-detection)
-11. [webapp](#webapp)
-12. [webapp behavior](#webapp-behavior)
-13. [clean + purge](#clean--purge)
-14. [debug](#debug)
-15. [signaling](#signaling)
+5. [systemconfig (flatpak)](#systemconfig-flatpak)
+6. [startup](#startup)
+7. [automation](#automation)
+8. [verify](#verify)
+9. [status](#status)
+10. [drift detection](#drift-detection)
+11. [update detection](#update-detection)
+12. [webapp](#webapp)
+13. [webapp behavior](#webapp-behavior)
+14. [clean + purge](#clean--purge)
+15. [debug](#debug)
+16. [signaling](#signaling)
 
 ## notes
 
@@ -217,6 +219,39 @@ commands:
 
   file ops: user-first ──> fail? ──> sudo -n fallback
             (for system dirs: /etc, /usr/lib, chattr)
+```
+
+## systemconfig (flatpak)
+
+```
+  flatpak Firefox runs sandboxed - configs on host /etc never reach it.
+  Mozilla declares an extension point: org.mozilla.firefox.systemconfig
+  mounted as /app/etc/firefox inside the sandbox. this command builds + installs it.
+
+  hifox install-systemconfig
+       │
+       ├── flatpak Firefox required
+       │
+       ├── detect runtime ── flatpak info org.mozilla.firefox
+       │                     (sdk version + branch, no hardcoding)
+       │
+       ├── stage ── ~/.cache/hifox-build.XXXX/
+       │              ├── manifest.yml         (org.mozilla.firefox.systemconfig)
+       │              └── content/
+       │                  ├── autoconfig.cfg   (generated)
+       │                  ├── autoconfig.js    (copy)
+       │                  └── policies.json    (copy)
+       │
+       ├── flatpak-builder ──> --user --install --force-clean
+       │
+       └── /app/etc/firefox now mounted inside sandbox
+              ├── autoconfig.cfg
+              ├── defaults/pref/autoconfig.js
+              └── policies/policies.json
+
+  one-time per install. re-run after extension uninstall or Firefox runtime changes.
+  hifox deploy writes new content into the registered extension dir
+  without rebuild, so plain content edits do not require this command.
 ```
 
 ## startup

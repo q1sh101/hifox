@@ -105,6 +105,14 @@ _deploy_homepage() {
 _deploy_autoconfig() {
   local sysconfig_dir="$1"
 
+  # Flatpak Firefox only loads this dir after the systemconfig extension is registered.
+  if [[ "${sysconfig_dir}" == *"/org.mozilla.firefox.systemconfig/"* ]]; then
+    if _check_command flatpak && ! flatpak info org.mozilla.firefox.systemconfig &>/dev/null; then
+      warn "flatpak: org.mozilla.firefox.systemconfig extension not registered"
+      warn "  run: hifox install-systemconfig"
+    fi
+  fi
+
   [[ -f "${_dir}/config/autoconfig.js" ]] || die "autoconfig.js not found"
   [[ -f "${_dir}/config/global_lockprefs.cfg" ]] || die "global_lockprefs.cfg not found"
   [[ -f "${_dir}/webapp/shared/webapp.cfg" ]] || die "webapp.cfg not found"

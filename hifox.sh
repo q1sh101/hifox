@@ -9,6 +9,7 @@ source "${_dir}/lib/clean.sh"
 source "${_dir}/lib/purge.sh"
 source "${_dir}/lib/status.sh"
 source "${_dir}/lib/watch.sh"
+source "${_dir}/lib/systemconfig.sh"
 
 cmd="${1:-}"
 
@@ -70,6 +71,10 @@ case "${cmd}" in
       *)       die "usage: hifox watch <install|remove|status>" ;;
     esac
     ;;
+  install-systemconfig)
+    [[ $# -le 1 ]] || die "install-systemconfig takes no arguments"
+    hifox_install_systemconfig
+    ;;
   *)
     log "usage: hifox <command>"
     log "  install [--flatpak|--standard]  first-time setup (saves target, deploys, starts watcher)"
@@ -82,6 +87,7 @@ case "${cmd}" in
     log "  watch   install                 auto-deploy on repo file changes"
     log "  watch   remove                  disable auto-deploy"
     log "  watch   status                  show watcher status"
+    log "  install-systemconfig            register flatpak extension (autoconfig + policies in sandbox)"
     exit 1
     ;;
 esac
