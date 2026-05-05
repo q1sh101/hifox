@@ -27,7 +27,7 @@ _check_command() {
 }
 
 _list_installations() {
-  if command -v flatpak &>/dev/null && flatpak info org.mozilla.firefox &>/dev/null; then
+  if _check_command flatpak && flatpak info org.mozilla.firefox &>/dev/null; then
     local arch fp_home pdir sdir
     arch=$(flatpak --default-arch 2>/dev/null || uname -m)
     fp_home="${HOME}/.var/app/org.mozilla.firefox"

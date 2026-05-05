@@ -2,13 +2,18 @@
 # shellcheck disable=SC2154  # _dir provided by hifox.sh
 
 _deploy_policies() {
-  local policies_dir="$1"
+  local policies_dir="$1" install_dir="${2:-}"
   local src="${_dir}/config/policies.json"
   [[ -f "${src}" ]] || die "policies.json not found in ${_dir}/config"
 
-  if command -v python3 &>/dev/null; then
+  if _check_command python3; then
     python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${src}" 2>/dev/null \
       || die "policies.json: invalid JSON"
+  fi
+
+  if [[ -n "${install_dir}" && -f "${install_dir}/distribution/policies.json" ]]; then
+    warn "${install_dir}/distribution/policies.json shadows hifox policy"
+    warn "  remove with: sudo rm ${install_dir}/distribution/policies.json"
   fi
 
   _ensure_dir "${policies_dir}" || die "cannot create ${policies_dir}"
@@ -31,7 +36,7 @@ _deploy_policies() {
   fi
 
   local count="?"
-  if command -v python3 &>/dev/null; then
+  if _check_command python3; then
     count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('policies',{})))" \
       "${src}" 2>/dev/null || echo "?")
   fi
@@ -233,7 +238,7 @@ _deploy_webapp_desktop() {
       local icon_hash
       icon_hash=$(cksum "${wdir}/${wname}.png" | awk '{print $1}')
       icon_target="${pixmap_dir}/${wname}-${icon_hash}.png"
-      command rm -f "${pixmap_dir}"/"${wname}".png "${pixmap_dir}"/"${wname}"-[0-9]*.png 2>/dev/null || true
+      command rm -f "${pixmap_dir}/${wname}.png" "${pixmap_dir}/${wname}"-[0-9]*.png 2>/dev/null || true
       cp "${wdir}/${wname}.png" "${icon_target}"
       chmod 644 "${icon_target}" 2>/dev/null || true
     fi
@@ -262,7 +267,7 @@ _deploy_webapp_desktop() {
     entry_wname="${entry_wname%-web.desktop}"
     if [[ ! -d "${_dir}/webapp/${entry_wname}" ]]; then
       rm -f "${entry}"
-      command rm -f "${pixmap_dir}"/"${entry_wname}".png "${pixmap_dir}"/"${entry_wname}"-[0-9]*.png 2>/dev/null || true
+      command rm -f "${pixmap_dir}/${entry_wname}.png" "${pixmap_dir}/${entry_wname}"-[0-9]*.png 2>/dev/null || true
       ok "pruned orphan: ${entry_wname}"
     fi
   done
@@ -278,7 +283,7 @@ hifox_deploy() {
   while IFS='|' read -r type pdir poldir sdir; do
     log "${type}"
     if (
-      _deploy_policies "${poldir}"
+      _deploy_policies "${poldir}" "${sdir}"
       _deploy_userjs "${pdir}"
       _deploy_autoconfig "${sdir}"
       _deploy_homepage "${pdir}"

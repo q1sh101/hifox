@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2154  # _dir provided by hifox.sh
 
 hifox_purge() {
   local target="${1:-}"

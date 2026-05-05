@@ -59,7 +59,7 @@ case "${cmd}" in
     hifox_status
     ;;
   logs)
-    command -v journalctl &>/dev/null || die "journalctl not found"
+    _require_command journalctl
     exec journalctl --user -n 50 -f -o cat -u hifox-watch.path -u hifox-deploy.service -u hifox-verify.service
     ;;
   watch)

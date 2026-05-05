@@ -2,8 +2,9 @@
 # shellcheck disable=SC2154  # _dir provided by hifox.sh
 
 hifox_watch_install() {
-  command -v systemctl &>/dev/null || die "systemctl not found"
+  _require_command systemctl
   systemctl --user status >/dev/null 2>&1 || die "systemd --user not running"
+  _require_firefox
 
   local udir
   udir="$(_unit_dir)"
@@ -118,7 +119,7 @@ EOF
 }
 
 hifox_watch_remove() {
-  command -v systemctl &>/dev/null || die "systemctl not found"
+  _require_command systemctl
   local udir
   udir="$(_unit_dir)"
 
@@ -136,7 +137,7 @@ hifox_watch_remove() {
 }
 
 hifox_watch_status() {
-  command -v systemctl &>/dev/null || die "systemctl not found"
+  _require_command systemctl
   systemctl --user status hifox-watch.path 2>&1 || true
   echo ""
   systemctl --user status hifox-verify.path 2>&1 || true
