@@ -35,12 +35,23 @@ _run() {
 }
 
 _clean_stale_locks() {
-  # pkill/kill leaves lock files behind - blocks next launch
-  # safe: only runs when zero Firefox processes exist
-  if pgrep -x firefox >/dev/null 2>&1 || pgrep -x firefox-esr >/dev/null 2>&1; then return; fi
+  # Stale lock files can block relaunch after an unclean Firefox exit.
+  if pgrep -x 'firefox(-esr)?(-bin)?' >/dev/null 2>&1; then return; fi
   local base
   if [[ "${_ff}" == "flatpak" ]]; then
-    base="${HOME}/.var/app/org.mozilla.firefox/config/mozilla/firefox"
+    # Flatpak may leave multiple migrated profile roots; prefer the active one.
+    local fp="${HOME}/.var/app/org.mozilla.firefox" cand newest=0 m first_existing=""
+    base=""
+    for cand in "${fp}/config/mozilla/firefox" "${fp}/.config/mozilla/firefox" "${fp}/.mozilla/firefox"; do
+      [[ -d "${cand}" ]] || continue
+      [[ -z "${first_existing}" ]] && first_existing="${cand}"
+      m=$(find "${cand}" -maxdepth 2 -name 'prefs.js' -printf '%T@\n' 2>/dev/null \
+          | sort -rn | head -1 | cut -d. -f1)
+      [[ -z "${m}" ]] && continue
+      if (( m > newest )); then newest=${m}; base="${cand}"; fi
+    done
+    [[ -n "${base}" ]] || base="${first_existing}"
+    [[ -n "${base}" ]] || base="${fp}/.mozilla/firefox"
   else
     base="${HOME}/.mozilla/firefox"
   fi

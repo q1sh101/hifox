@@ -24,9 +24,17 @@ _list_installations() {
     sdir="${HOME}/.local/share/flatpak/extension/org.mozilla.firefox.systemconfig/${arch}/stable"
     pdir=""
     local cand
-    for cand in "${fp_home}/.config/mozilla/firefox" "${fp_home}/config/mozilla/firefox" "${fp_home}/.mozilla/firefox"; do
-      [[ -d "${cand}" ]] && pdir="${cand}" && break
+    # Flatpak may leave multiple migrated profile roots; prefer the active one.
+    local newest=0 m first_existing=""
+    for cand in "${fp_home}/config/mozilla/firefox" "${fp_home}/.config/mozilla/firefox" "${fp_home}/.mozilla/firefox"; do
+      [[ -d "${cand}" ]] || continue
+      [[ -z "${first_existing}" ]] && first_existing="${cand}"
+      m=$(find "${cand}" -maxdepth 2 -name 'prefs.js' -printf '%T@\n' 2>/dev/null \
+          | sort -rn | head -1 | cut -d. -f1)
+      [[ -z "${m}" ]] && continue
+      if (( m > newest )); then newest=${m}; pdir="${cand}"; fi
     done
+    [[ -n "${pdir}" ]] || pdir="${first_existing}"
     [[ -n "${pdir}" ]] || pdir="${fp_home}/.mozilla/firefox"
     echo "flatpak|${pdir}|${sdir}/policies|${sdir}"
   fi
@@ -43,10 +51,11 @@ _list_installations() {
 _target_file() { echo "${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/target"; }
 
 _save_target() {
-  local f
+  local f tmp
   f="$(_target_file)"
   mkdir -p "$(dirname "${f}")"
-  printf '%s\n' "$1" > "${f}"
+  tmp="${f}.tmp.$$"
+  printf '%s\n' "$1" > "${tmp}" && mv -f "${tmp}" "${f}" || { rm -f "${tmp}"; return 1; }
 }
 
 _read_target() {
@@ -125,11 +134,17 @@ _find_profile() {
     fi
 
     local default_path is_rel
-    read -r default_path is_rel < <(awk -F= '
-      /^\[Profile/ { if(p && d) { print p, r; exit } p=""; d=0; r="1" }
-      /^Path=/ { p=$2 }
-      /^IsRelative=/ { r=$2 }
-      /^Default=1/ { d=1 }
+    IFS=$'\t' read -r default_path is_rel < <(awk -F= '
+      BEGIN { OFS="\t" }
+      /^\[/ {
+        if (in_p && p && d) { print p, r; exit }
+        in_p = ($0 ~ /^\[Profile/)
+        if (in_p) { p=""; d=0; r="1" }
+        next
+      }
+      in_p && /^Path=/ { p=$2 }
+      in_p && /^IsRelative=/ { r=$2 }
+      in_p && /^Default=1/ { d=1 }
       END { if(p && d) print p, r }
     ' "${ini}" 2>/dev/null) || true
     if [[ -n "${default_path}" ]]; then
@@ -155,10 +170,15 @@ _list_profile_paths() {
   local ini="${profiles_dir}/profiles.ini"
   [[ -f "${ini}" ]] || return 1
   awk -F= -v pd="${profiles_dir}" '
-    /^\[Profile/ { if(p!="") print (r=="0" ? p : pd"/"p); p=""; r="1" }
-    /^Path=/ { p=$2 }
-    /^IsRelative=/ { r=$2 }
-    END { if(p!="") print (r=="0" ? p : pd"/"p) }
+    /^\[/ {
+      if (in_p && p!="") print (r=="0" ? p : pd"/"p)
+      in_p = ($0 ~ /^\[Profile/)
+      if (in_p) { p=""; r="1" }
+      next
+    }
+    in_p && /^Path=/ { p=$2 }
+    in_p && /^IsRelative=/ { r=$2 }
+    END { if(in_p && p!="") print (r=="0" ? p : pd"/"p) }
   ' "${ini}" | while IFS= read -r _p; do
     [[ "${_p}" == *".."* ]] && continue
     [[ "${_p}" == "${profiles_dir}/"* ]] || continue
@@ -178,8 +198,7 @@ _all_profile_paths() {
 }
 
 _kill_firefox() {
-  pkill firefox 2>/dev/null || true
-  pkill firefox-esr 2>/dev/null || true
+  pkill -x 'firefox(-esr)?(-bin)?' 2>/dev/null || true
   flatpak kill org.mozilla.firefox 2>/dev/null || true
 }
 
@@ -199,12 +218,13 @@ _chattr_unlock() {
   local f="$1"
   [[ -f "${f}" ]] || return 0
   if _can_sudo_chattr; then
-    sudo -n chattr -i "${f}" 2>/dev/null || true
-    return 0
+    sudo -n chattr -i "${f}" 2>/dev/null
+    return
   fi
   if lsattr "${f}" 2>/dev/null | awk '{print $1}' | grep -q 'i'; then
     echo "  [hifox] sudo required to unlock immutable: $(basename "${f}")" >&2
     if (exec </dev/tty) 2>/dev/null; then
+      # shellcheck disable=SC2024  # redirect is intentional for tty input
       sudo chattr -i "${f}" </dev/tty || return 1
     else
       warn "no terminal for sudo - run manually: sudo chattr -i ${f}"

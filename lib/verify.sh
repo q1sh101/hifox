@@ -35,7 +35,7 @@ _hifox_verify() {
     local waited=0
     while [[ ! -s "${prefs}" ]] && (( waited < 15 )); do
       sleep 1
-      ((waited++))
+      ((waited++)) || true
     done
     if [[ ! -s "${prefs}" ]]; then
       warn "${type}: prefs.js empty after 15s"
@@ -97,13 +97,15 @@ _hifox_verify() {
       'security.enterprise_roots.enabled|false|system CA import blocked'
     )
 
-    local check key expected desc actual
+    local check key key_re expected desc actual
     for check in "${checks[@]}"; do
       IFS='|' read -r key expected desc <<< "${check}"
+      # escape dots in pref key: pref names contain '.' which is a regex meta-char
+      key_re="${key//./\\.}"
       # check prefs.js (user_pref) first, then autoconfig.cfg base lockPrefs (not indented = not webapp overrides)
-      actual=$(sed -n "s/^user_pref(\"${key}\", *\([^)]*\));.*/\1/p" "${prefs}" 2>/dev/null | tail -1 || true)
+      actual=$(sed -n "s/^user_pref(\"${key_re}\", *\([^)]*\));.*/\1/p" "${prefs}" 2>/dev/null | tail -1 || true)
       if [[ -z "${actual}" ]] && [[ -f "${ac}" ]]; then
-        actual=$(sed -n "s/^lockPref(\"${key}\", *\([^)]*\));.*/\1/p" "${ac}" 2>/dev/null | tail -1 || true)
+        actual=$(sed -n "s/^lockPref(\"${key_re}\", *\([^)]*\));.*/\1/p" "${ac}" 2>/dev/null | tail -1 || true)
       fi
       if [[ -z "${actual}" ]]; then
         failures+=("MISSING: ${desc}")
@@ -126,10 +128,9 @@ _hifox_verify() {
       fi
     fi
 
-    local dump_err
-    dump_err=$(sed -n 's/.*_hifox\.pref_dump_error", *"\([^"]*\)".*/\1/p' "${prefs}" 2>/dev/null || true)
-    if [[ -n "${dump_err}" ]]; then
-      failures+=("DUMP FAILED: ${dump_err}")
+    local dump_err_file="${profile}/generated_pref_dump.err"
+    if [[ -f "${dump_err_file}" && -s "${dump_err_file}" ]]; then
+      failures+=("DUMP FAILED: $(<"${dump_err_file}")")
     fi
 
     if (( ${#failures[@]} == 0 )); then

@@ -20,7 +20,8 @@ _deploy_policies() {
     || die "cannot unlock ${policies_dir}/policies.json (immutable)"
   if ! _install_file "${src}" "${policies_dir}/policies.json"; then
     if ${can_chattr} && [[ -f "${policies_dir}/policies.json" ]]; then
-      sudo -n chattr +i "${policies_dir}/policies.json" 2>/dev/null || true
+      sudo -n chattr +i "${policies_dir}/policies.json" 2>/dev/null \
+        || warn "policies.json: re-lock failed - file remains writable"
     fi
     die "cannot write ${policies_dir}/policies.json"
   fi
@@ -58,11 +59,15 @@ _deploy_userjs() {
     fi
     if ! cp "${src}" "${target}" 2>/dev/null; then
       if ${can_chattr} && [[ -f "${target}" ]]; then
-        sudo -n chattr +i "${target}" 2>/dev/null || true
+        sudo -n chattr +i "${target}" 2>/dev/null \
+          || warn "$(basename "${profile}"): user.js re-lock failed - file remains writable"
       fi
       warn "cannot copy user.js to $(basename "${profile}")"; continue
     fi
-    if ${can_chattr}; then sudo -n chattr +i "${target}" 2>/dev/null || true; fi
+    if ${can_chattr}; then
+      sudo -n chattr +i "${target}" 2>/dev/null \
+        || warn "$(basename "${profile}"): user.js chattr +i failed - file remains writable"
+    fi
     ((deployed++)) || true
   done < <(_all_profile_paths "${profiles_dir}")
 
@@ -112,12 +117,12 @@ _deploy_autoconfig() {
 
   local tmp
   tmp=$(mktemp)
-  # shellcheck disable=SC2064
-  trap "rm -f '${tmp}'" EXIT  # scoped to deploy subshell
+  trap 'rm -f "${tmp:?}"' EXIT
   _generate_autoconfig > "${tmp}"
   _install_file "${tmp}" "${sysconfig_dir}/autoconfig.cfg" \
-    || { rm -f "${tmp}"; die "cannot write autoconfig.cfg to ${sysconfig_dir}"; }
-  rm -f "${tmp}"
+    || { rm -f "${tmp:?}"; die "cannot write autoconfig.cfg to ${sysconfig_dir}"; }
+  rm -f "${tmp:?}"
+  trap - EXIT
 
   ok "autoconfig.cfg (generated)"
 }
@@ -183,11 +188,15 @@ _deploy_webapp_profiles() {
       if mkdir -p "${wprofile}/chrome" \
         && cp "${css_src}" "${wprofile}/chrome/userChrome.css" \
         && cp "${userjs_src}" "${wprofile}/user.js"; then
-        if ${can_chattr}; then sudo -n chattr +i "${wprofile}/user.js" 2>/dev/null || true; fi
+        if ${can_chattr}; then
+          sudo -n chattr +i "${wprofile}/user.js" 2>/dev/null \
+            || warn "${wname}: user.js chattr +i failed - file remains writable"
+        fi
         ok "${wname}: profile ready"
       else
         if ${can_chattr} && [[ -f "${wprofile}/user.js" ]]; then
-          sudo -n chattr +i "${wprofile}/user.js" 2>/dev/null || true
+          sudo -n chattr +i "${wprofile}/user.js" 2>/dev/null \
+            || warn "${wname}: user.js re-lock failed - file remains writable"
         fi
         warn "${wname}: file copy failed"
       fi
@@ -216,7 +225,7 @@ _deploy_webapp_desktop() {
       local icon_hash
       icon_hash=$(cksum "${wdir}/${wname}.png" | awk '{print $1}')
       icon_target="${pixmap_dir}/${wname}-${icon_hash}.png"
-      command rm -f "${pixmap_dir}"/"${wname}".png "${pixmap_dir}"/"${wname}"-*.png 2>/dev/null || true
+      command rm -f "${pixmap_dir}"/"${wname}".png "${pixmap_dir}"/"${wname}"-[0-9]*.png 2>/dev/null || true
       cp "${wdir}/${wname}.png" "${icon_target}"
       chmod 644 "${icon_target}" 2>/dev/null || true
     fi
@@ -245,7 +254,7 @@ _deploy_webapp_desktop() {
     entry_wname="${entry_wname%-web.desktop}"
     if [[ ! -d "${_dir}/webapp/${entry_wname}" ]]; then
       rm -f "${entry}"
-      command rm -f "${pixmap_dir}"/"${entry_wname}".png "${pixmap_dir}"/"${entry_wname}"-*.png 2>/dev/null || true
+      command rm -f "${pixmap_dir}"/"${entry_wname}".png "${pixmap_dir}"/"${entry_wname}"-[0-9]*.png 2>/dev/null || true
       ok "pruned orphan: ${entry_wname}"
     fi
   done

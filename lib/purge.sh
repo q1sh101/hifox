@@ -25,7 +25,7 @@ hifox_purge() {
   log "killing Firefox..."
   _kill_firefox
   sleep 1
-  if pgrep -x firefox &>/dev/null || pgrep -x firefox-esr &>/dev/null; then
+  if pgrep -x 'firefox(-esr)?(-bin)?' &>/dev/null; then
     die "Firefox still running - close it manually and retry"
   fi
   ok "Firefox stopped"
@@ -107,7 +107,7 @@ hifox_purge() {
         esac
       done
     else
-      [[ -d "${HOME}/.cache/mozilla" ]] && rm -rf "${HOME}/.cache/mozilla" 2>/dev/null \
+      [[ -d "${HOME}/.cache/mozilla" ]] && rm -rf "${HOME:?}/.cache/mozilla" 2>/dev/null \
         && ok "cleared: ~/.cache/mozilla"
     fi
   done <<< "${installs}"
