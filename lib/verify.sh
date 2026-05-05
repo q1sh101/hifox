@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# lib/verify.sh - Firefox pref integrity check
 # shellcheck disable=SC2154  # _dir, _find_profile, etc. provided by hifox.sh
 
 _hifox_verify() {
@@ -7,10 +6,10 @@ _hifox_verify() {
 
   _check_file() {
     local src="$1" dst="$2" name="$3"
-    if [[ ! -f "$dst" ]]; then
-      failures+=("MISSING: $name")
-    elif ! diff -q "$src" "$dst" &>/dev/null; then
-      failures+=("DRIFT: $name")
+    if [[ ! -f "${dst}" ]]; then
+      failures+=("MISSING: ${name}")
+    elif ! diff -q "${src}" "${dst}" &>/dev/null; then
+      failures+=("DRIFT: ${name}")
     fi
   }
 
@@ -19,29 +18,28 @@ _hifox_verify() {
     shift
     local other
     for other in "$@"; do
-      [[ -e "$other" ]] || continue
-      [[ "$probe" -ot "$other" ]] && return 0
+      [[ -e "${other}" ]] || continue
+      [[ "${probe}" -ot "${other}" ]] && return 0
     done
     return 1
   }
 
   local type pdir poldir sdir
   while IFS='|' read -r type pdir poldir sdir; do
-    log "verifying $type..."
+    log "verifying ${type}..."
 
-    # --- pref checks (main profile) ---
     local profile
-    profile="$(_find_profile "$pdir")" || { log "$type: no profile yet - skipping"; continue; }
+    profile="$(_find_profile "${pdir}")" || { log "${type}: no profile yet - skipping"; continue; }
     local prefs="${profile}/prefs.js"
 
     local waited=0
-    while [[ ! -s "$prefs" ]] && (( waited < 15 )); do
+    while [[ ! -s "${prefs}" ]] && (( waited < 15 )); do
       sleep 1
       ((waited++))
     done
-    if [[ ! -s "$prefs" ]]; then
-      warn "$type: prefs.js empty after 15s"
-      all_failures+=("$type: prefs.js empty")
+    if [[ ! -s "${prefs}" ]]; then
+      warn "${type}: prefs.js empty after 15s"
+      all_failures+=("${type}: prefs.js empty")
       continue
     fi
 
@@ -50,9 +48,8 @@ _hifox_verify() {
     local ac_js="${sdir}/defaults/pref/autoconfig.js"
     local main_user_js="${profile}/user.js"
 
-    # --- deploy integrity (always check) ---
     _check_file "${_dir}/config/policies.json" "${poldir}/policies.json" "policies.json"
-    _check_file "${_dir}/config/autoconfig.js" "$ac_js" "autoconfig.js"
+    _check_file "${_dir}/config/autoconfig.js" "${ac_js}" "autoconfig.js"
     if [[ ! -f "${sdir}/autoconfig.cfg" ]]; then
       failures+=("MISSING: autoconfig.cfg")
     elif ! diff -q <(_generate_autoconfig) "${sdir}/autoconfig.cfg" &>/dev/null; then
@@ -62,14 +59,14 @@ _hifox_verify() {
     local uj_src="${_dir}/config/user.js"
     local _prof_path
     while IFS= read -r _prof_path; do
-      [[ -d "$_prof_path" ]] || continue
-      _check_file "$uj_src" "${_prof_path}/user.js" "user.js ($(basename "$_prof_path"))"
-    done < <(_all_profile_paths "$pdir")
+      [[ -d "${_prof_path}" ]] || continue
+      _check_file "${uj_src}" "${_prof_path}/user.js" "user.js ($(basename "${_prof_path}"))"
+    done < <(_all_profile_paths "${pdir}")
 
     # If deployed files are newer than prefs.js, Firefox has not restarted into this config yet.
     if (( ${#failures[@]} == 0 )) \
-      && _older_than_any "$prefs" "$main_user_js" "$ac_js" "$ac" "${poldir}/policies.json"; then
-      ok "$type: deploy staged - restart Firefox to apply"
+      && _older_than_any "${prefs}" "${main_user_js}" "${ac_js}" "${ac}" "${poldir}/policies.json"; then
+      ok "${type}: deploy staged - restart Firefox to apply"
       continue
     fi
 
@@ -102,48 +99,46 @@ _hifox_verify() {
 
     local check key expected desc actual
     for check in "${checks[@]}"; do
-      IFS='|' read -r key expected desc <<< "$check"
+      IFS='|' read -r key expected desc <<< "${check}"
       # check prefs.js (user_pref) first, then autoconfig.cfg base lockPrefs (not indented = not webapp overrides)
-      actual=$(sed -n "s/^user_pref(\"${key}\", *\([^)]*\));.*/\1/p" "$prefs" 2>/dev/null | tail -1 || true)
-      if [[ -z "$actual" ]] && [[ -f "$ac" ]]; then
-        actual=$(sed -n "s/^lockPref(\"${key}\", *\([^)]*\));.*/\1/p" "$ac" 2>/dev/null | tail -1 || true)
+      actual=$(sed -n "s/^user_pref(\"${key}\", *\([^)]*\));.*/\1/p" "${prefs}" 2>/dev/null | tail -1 || true)
+      if [[ -z "${actual}" ]] && [[ -f "${ac}" ]]; then
+        actual=$(sed -n "s/^lockPref(\"${key}\", *\([^)]*\));.*/\1/p" "${ac}" 2>/dev/null | tail -1 || true)
       fi
-      if [[ -z "$actual" ]]; then
-        failures+=("MISSING: $desc")
-      elif [[ "$actual" != "$expected" ]]; then
-        failures+=("WRONG: $desc (got: $actual)")
+      if [[ -z "${actual}" ]]; then
+        failures+=("MISSING: ${desc}")
+      elif [[ "${actual}" != "${expected}" ]]; then
+        failures+=("WRONG: ${desc} (got: ${actual})")
       fi
     done
 
-    # --- dump monitoring (auto-copy to repo when changed) ---
     local dump_src="${profile}/generated_pref_dump.txt"
     local dump_dst="${_dir}/config/generated_pref_dump.txt"
-    if [[ ! -s "$dump_src" ]]; then
+    if [[ ! -s "${dump_src}" ]]; then
       failures+=("MISSING: pref dump (Firefox didn't generate it)")
     else
-      if [[ ! -f "$dump_dst" ]] || ! diff -q "$dump_src" "$dump_dst" &>/dev/null; then
-        if cp "$dump_src" "$dump_dst" 2>/dev/null; then
-          ok "$type: pref dump updated in repo"
+      if [[ ! -f "${dump_dst}" ]] || ! diff -q "${dump_src}" "${dump_dst}" &>/dev/null; then
+        if cp "${dump_src}" "${dump_dst}" 2>/dev/null; then
+          ok "${type}: pref dump updated in repo"
           notify-send "hifox: new prefs detected" \
             "git diff config/generated_pref_dump.txt" 2>/dev/null || true
         fi
       fi
     fi
 
-    # --- dump error check ---
     local dump_err
-    dump_err=$(sed -n 's/.*_hifox\.pref_dump_error", *"\([^"]*\)".*/\1/p' "$prefs" 2>/dev/null || true)
-    if [[ -n "$dump_err" ]]; then
-      failures+=("DUMP FAILED: $dump_err")
+    dump_err=$(sed -n 's/.*_hifox\.pref_dump_error", *"\([^"]*\)".*/\1/p' "${prefs}" 2>/dev/null || true)
+    if [[ -n "${dump_err}" ]]; then
+      failures+=("DUMP FAILED: ${dump_err}")
     fi
 
     if (( ${#failures[@]} == 0 )); then
-      ok "$type: all passed (${#checks[@]} prefs + policies + autoconfig)"
+      ok "${type}: all passed (${#checks[@]} prefs + policies + autoconfig)"
     else
       local msg
       for msg in "${failures[@]}"; do
-        warn "$type: $msg"
-        all_failures+=("$type: $msg")
+        warn "${type}: ${msg}"
+        all_failures+=("${type}: ${msg}")
       done
     fi
   done < <(_active_installations)

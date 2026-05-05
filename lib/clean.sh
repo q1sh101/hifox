@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# lib/clean.sh - remove stale remnant files from profiles
 
 hifox_clean() {
   _require_firefox
@@ -8,18 +7,17 @@ hifox_clean() {
   local removed=0
 
   local _type pdir _poldir _sdir
-  # shellcheck disable=SC2034
+  # shellcheck disable=SC2034  # _type, _poldir, _sdir intentionally unused (destructuring read)
   while IFS='|' read -r _type pdir _poldir _sdir; do
-    [[ -d "$pdir" ]] || continue
-    local ini="$pdir/profiles.ini"
-    [[ -f "$ini" ]] || continue
+    [[ -d "${pdir}" ]] || continue
+    local ini="${pdir}/profiles.ini"
+    [[ -f "${ini}" ]] || continue
 
     local profile
     while IFS= read -r profile; do
-      [[ -d "$profile" ]] || continue
+      [[ -d "${profile}" ]] || continue
       local name
-      name="$(basename "$profile")"
-      # telemetry, suggest DB, experiment data - none should survive hardening
+      name="$(basename "${profile}")"
       local target
       for target in \
         suggest.sqlite \
@@ -48,18 +46,18 @@ hifox_clean() {
         permissions.sqlite \
         notification-store.json
       do
-        if [[ -e "$profile/$target" ]]; then
+        if [[ -e "${profile}/${target}" ]]; then
           rm -rf "${profile:?}/${target:?}"
-          ok "removed $name/$target"
+          ok "removed ${name}/${target}"
           ((removed++)) || true
         fi
       done
-    done < <(_list_profile_paths "$pdir")
+    done < <(_list_profile_paths "${pdir}")
   done < <(_active_installations)
 
   if (( removed == 0 )); then
     ok "no remnants found"
   else
-    log "$removed items removed"
+    log "${removed} items removed"
   fi
 }

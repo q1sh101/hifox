@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# lib/watch.sh - systemd automation for auto-deploy
 # shellcheck disable=SC2154  # _dir provided by hifox.sh
 
 hifox_watch_install() {
@@ -9,7 +8,7 @@ hifox_watch_install() {
   local udir
   udir="$(_unit_dir)"
   local exe="${_dir}/hifox.sh"
-  mkdir -p "$udir"
+  mkdir -p "${udir}"
 
   cat > "${udir}/hifox-deploy.service" <<EOF
 [Unit]
@@ -20,7 +19,6 @@ Type=oneshot
 ExecStart="${exe}" deploy
 EOF
 
-  # path: watch repo files for changes
   {
     echo "[Unit]"
     echo "Description=Watch hifox repo for config changes"
@@ -29,32 +27,27 @@ EOF
     echo "PathModified=${_dir}/hifox.sh"
     echo "PathModified=${_dir}/config/user.js"
     echo "PathModified=${_dir}/config/policies.json"
-    # tool source
     for f in "${_dir}/lib"/*.sh; do
-      [[ -f "$f" ]] && echo "PathModified=$f"
+      [[ -f "${f}" ]] && echo "PathModified=${f}"
     done
-    # detect new webapp dirs created under webapp/
     echo "PathChanged=${_dir}/webapp"
-    # global autoconfig source files (exclude generated artifacts)
     local f
     for f in "${_dir}/config"/*; do
-      [[ -f "$f" ]] || continue
-      [[ "$(basename "$f")" == "generated_pref_dump.txt" ]] && continue
-      echo "PathModified=$f"
+      [[ -f "${f}" ]] || continue
+      [[ "$(basename "${f}")" == "generated_pref_dump.txt" ]] && continue
+      echo "PathModified=${f}"
     done
-    # shared webapp files (webapp.css, webapp.cfg)
     for f in "${_dir}/webapp/shared"/*; do
-      [[ -f "$f" ]] && echo "PathModified=$f"
+      [[ -f "${f}" ]] && echo "PathModified=${f}"
     done
-    # per-webapp: watch dir (new files) + each existing file (content edits)
     local wdir
     for wdir in "${_dir}/webapp"/*/; do
-      [[ -d "$wdir" ]] || continue
-      [[ "$(basename "$wdir")" == "shared" ]] && continue
+      [[ -d "${wdir}" ]] || continue
+      [[ "$(basename "${wdir}")" == "shared" ]] && continue
       echo "PathChanged=${wdir%/}"
-      for f in "$wdir"*; do
-        [[ -f "$f" ]] || continue
-        echo "PathModified=$f"
+      for f in "${wdir}"*; do
+        [[ -f "${f}" ]] || continue
+        echo "PathModified=${f}"
       done
     done
     echo "Unit=hifox-deploy.service"
@@ -65,7 +58,6 @@ EOF
 WantedBy=default.target
 EOF
 
-  # verify service: integrity check (triggered by path + timer)
   cat > "${udir}/hifox-verify.service" <<EOF
 [Unit]
 Description=hifox verify Firefox hardening integrity
@@ -76,7 +68,6 @@ ExecStartPre=/bin/sleep 5
 ExecStart="${exe}" verify
 EOF
 
-  # verify path: watch deployed files in Firefox directories (live detection)
   {
     echo "[Unit]"
     echo "Description=Watch Firefox for hardening drift"
@@ -87,13 +78,12 @@ EOF
       echo "PathChanged=${sdir}/autoconfig.cfg"
       echo "PathChanged=${sdir}/defaults/pref/autoconfig.js"
       echo "PathChanged=${poldir}/policies.json"
-      # profile files (all profiles)
       local _prof_path
       while IFS= read -r _prof_path; do
-        [[ -d "$_prof_path" ]] || continue
+        [[ -d "${_prof_path}" ]] || continue
         echo "PathChanged=${_prof_path}/generated_pref_dump.txt"
         echo "PathChanged=${_prof_path}/user.js"
-      done < <(_all_profile_paths "$_pdir")
+      done < <(_all_profile_paths "${_pdir}")
     done < <(_active_installations)
     echo "Unit=hifox-verify.service"
   } > "${udir}/hifox-verify.path"
@@ -103,7 +93,6 @@ EOF
 WantedBy=default.target
 EOF
 
-  # verify timer: fallback periodic check (catches file deletion)
   cat > "${udir}/hifox-verify.timer" <<EOF
 [Unit]
 Description=hifox periodic hardening check

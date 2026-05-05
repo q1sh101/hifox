@@ -1,5 +1,3 @@
-/* === TabsToolbar - branded tab strip === */
-
 #TabsToolbar {
   min-height: 44px !important;
   background-color: black !important;
@@ -17,8 +15,6 @@
   border: none !important;
 }
 
-/* single tab: favicon + title, no close button, transparent bg */
-
 .tabbrowser-tab:only-of-type .tab-close-button {
   display: none !important;
 }
@@ -34,8 +30,6 @@
   background: transparent !important;
 }
 
-/* multi tab: first tab becomes 36px pinned icon */
-
 .tabbrowser-tab:first-of-type:not(:only-of-type) {
   max-width: 36px !important;
   min-width: 36px !important;
@@ -45,8 +39,6 @@
 .tabbrowser-tab:first-of-type:not(:only-of-type) .tab-label-container {
   display: none !important;
 }
-
-/* === nav-bar - URL + reload + uBlock only === */
 
 #nav-bar {
   background: black !important;
@@ -81,8 +73,6 @@
   margin-right: 5px !important;
 }
 
-/* URL bar - hide text, keep permission icons */
-
 #urlbar,
 #urlbar[focused="true"] {
   background: transparent !important;
@@ -107,8 +97,6 @@
 #identity-icon-box {
   display: none !important;
 }
-
-/* === context menu - hide browser-only actions === */
 
 #context-viewsource,
 #context-inspect,

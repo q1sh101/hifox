@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# hifox.sh - Firefox hifox CLI
 set -euo pipefail
 
 _dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -11,33 +10,31 @@ source "${_dir}/lib/purge.sh"
 source "${_dir}/lib/status.sh"
 source "${_dir}/lib/watch.sh"
 
-# --- dispatch ---
 cmd="${1:-}"
 
-case "$cmd" in
+case "${cmd}" in
   install)
     flag="${2:-}"
     target=""
-    case "$flag" in
+    case "${flag}" in
       --flatpak)  target="flatpak" ;;
       --standard) target="standard" ;;
       "")         target="all" ;;
       *)          die "usage: hifox install [--flatpak|--standard]" ;;
     esac
-    # validate target has installations before persisting
     installs=$(_list_installations)
-    if [[ "$target" == "all" ]]; then
-      [[ -n "$installs" ]] || die "no Firefox found (checked Flatpak + /usr/lib)"
+    if [[ "${target}" == "all" ]]; then
+      [[ -n "${installs}" ]] || die "no Firefox found (checked Flatpak + /usr/lib)"
     else
-      echo "$installs" | grep -q "^${target}|" || die "no $target Firefox found"
+      echo "${installs}" | grep -q "^${target}|" || die "no ${target} Firefox found"
     fi
-    _save_target "$target"
-    ok "target: $target"
+    _save_target "${target}"
+    ok "target: ${target}"
     hifox_deploy
     _bin="${HOME}/.local/bin"
-    mkdir -p "$_bin"
+    mkdir -p "${_bin}"
     ln -sf "${_dir}/hifox.sh" "${_bin}/hifox"
-    [[ ":$PATH:" == *":${_bin}:"* ]] || warn "add ${_bin} to PATH"
+    [[ ":${PATH}:" == *":${_bin}:"* ]] || warn "add ${_bin} to PATH"
     ok "command: hifox"
     hifox_watch_install
     log "done - launch Firefox, close it, launch again"
@@ -66,7 +63,7 @@ case "$cmd" in
     ;;
   watch)
     sub="${2:-}"
-    case "$sub" in
+    case "${sub}" in
       install) hifox_watch_install ;;
       remove)  hifox_watch_remove ;;
       status)  hifox_watch_status ;;
