@@ -110,12 +110,22 @@ _ensure_dir() {
 }
 
 _install_file() {
-  local src="$1" dst="$2"
-  cp "${src}" "${dst}" 2>/dev/null && return 0
-  if sudo -n cp "${src}" "${dst}" 2>/dev/null; then
-    sudo -n chmod 644 "${dst}" 2>/dev/null || true
+  local src="$1" dst="$2" dir base tmp
+  dir="$(dirname "${dst}")"
+  base="$(basename "${dst}")"
+  tmp="${dir}/.${base}.tmp.$$"
+  if cp "${src}" "${tmp}" 2>/dev/null \
+    && chmod 644 "${tmp}" 2>/dev/null \
+    && mv -f "${tmp}" "${dst}" 2>/dev/null; then
     return 0
   fi
+  rm -f "${tmp}" 2>/dev/null || true
+  if sudo -n cp "${src}" "${tmp}" 2>/dev/null \
+    && sudo -n chmod 644 "${tmp}" 2>/dev/null \
+    && sudo -n mv -f "${tmp}" "${dst}" 2>/dev/null; then
+    return 0
+  fi
+  sudo -n rm -f "${tmp}" 2>/dev/null || true
   return 1
 }
 

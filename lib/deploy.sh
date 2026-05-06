@@ -6,7 +6,10 @@ _deploy_policies() {
   local src="${_dir}/config/policies.json"
   [[ -f "${src}" ]] || die "policies.json not found in ${_dir}/config"
 
-  if _check_command python3; then
+  local has_python=false
+  _check_command python3 && has_python=true
+
+  if ${has_python}; then
     python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${src}" 2>/dev/null \
       || die "policies.json: invalid JSON"
   fi
@@ -36,7 +39,7 @@ _deploy_policies() {
   fi
 
   local count="?"
-  if _check_command python3; then
+  if ${has_python}; then
     count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('policies',{})))" \
       "${src}" 2>/dev/null || echo "?")
   fi
@@ -62,7 +65,7 @@ _deploy_userjs() {
     if ! _chattr_unlock "${target}"; then
       warn "cannot unlock user.js in $(basename "${profile}") (immutable)"; continue
     fi
-    if ! cp "${src}" "${target}" 2>/dev/null; then
+    if ! _install_file "${src}" "${target}"; then
       if ${can_chattr} && [[ -f "${target}" ]]; then
         sudo -n chattr +i "${target}" 2>/dev/null \
           || warn "$(basename "${profile}"): user.js re-lock failed - file remains writable"
