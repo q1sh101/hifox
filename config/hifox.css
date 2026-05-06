@@ -1,19 +1,19 @@
 @-moz-document url-prefix(about:newtab), url-prefix(about:home) {
 
-  .search-wrapper .logo-and-wordmark .logo {
+  .logo-and-wordmark .logo {
     background-image: url("hifox.png") !important;
     background-size: contain !important;
     width: 300px !important;
     height: 200px !important;
   }
 
-  .search-wrapper .logo-and-wordmark .wordmark {
+  .logo-and-wordmark .wordmark {
     display: none !important;
   }
 
-  section[data-section-id="topsites"],
-  section[data-section-id="topstories"],
-  section[data-section-id="highlights"],
+  [data-section-id="topsites"],
+  [data-section-id="topstories"],
+  [data-section-id="highlights"],
   .ds-outer-wrapper-margin,
   .SnippetBaseContainer {
     display: none !important;

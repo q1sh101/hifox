@@ -317,6 +317,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 
   profile paths: only watched if profile exists at install time.
   30min timer covers the gap. deploy auto-refreshes watcher paths.
+
+  Flatpak auto-deploy is user-writable. Standard Firefox touches /etc or the
+  install dir, so auto-deploy needs sudo -n; otherwise run hifox deploy manually.
 ```
 
 ## verify
@@ -425,6 +428,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   prefs - hifox diffs the full dump, catches meaningful changes, and notifies
   before the new state is accepted.
   (volatile prefs - timestamps, counters, settings cache - skipped for clean signal.)
+  Firefox writes generated_pref_dump.txt inside each profile; verify copies it
+  into config/generated_pref_dump.<target>.txt so standard and Flatpak baselines
+  never overwrite each other.
 
   ┌─────────┐    ┌──────────────────┐     ┌──────────────────┐
   │ Firefox │    │  autoconfig.cfg  │     │     profile/     │
@@ -443,7 +449,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
                                   │
                                   ▼
   ┌──────────────────────────────────────────────────────────┐
-  │  git diff config/generated_pref_dump.txt                 │
+  │  git diff config/generated_pref_dump.<target>.txt        │
   │                                                          │
   │  + browser.new.feature = true              <── new pref  │
   │  - browser.old.setting = true [LOCKED]                   │

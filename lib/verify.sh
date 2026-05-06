@@ -115,7 +115,7 @@ _hifox_verify() {
     done
 
     local dump_src="${profile}/generated_pref_dump.txt"
-    local dump_dst="${_dir}/config/generated_pref_dump.txt"
+    local dump_dst="${_dir}/config/generated_pref_dump.${type}.txt"
     if [[ ! -s "${dump_src}" ]]; then
       failures+=("MISSING: pref dump (Firefox didn't generate it)")
     else
@@ -123,7 +123,7 @@ _hifox_verify() {
         if cp "${dump_src}" "${dump_dst}" 2>/dev/null; then
           ok "${type}: pref dump updated in repo"
           notify-send "hifox: new prefs detected" \
-            "git diff config/generated_pref_dump.txt" 2>/dev/null || true
+            "git diff config/generated_pref_dump.${type}.txt" 2>/dev/null || true
         fi
       fi
     fi

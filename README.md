@@ -3,8 +3,14 @@
   </p>
 
 <h1 align="center"><code>hifox</code></h1>
+<p align="center">
+  <img alt="Linux" src="https://img.shields.io/badge/Linux-FFA500?logo=linux&logoColor=black&labelColor=FFA500">
+  <img alt="Firefox" src="https://img.shields.io/badge/Firefox-ff7139?logo=firefoxbrowser&logoColor=white">
+  <img alt="Shell" src="https://img.shields.io/badge/Shell-2ea44f?logo=gnu-bash&logoColor=white">
+</p>
+<p align="center">Deterministic Firefox hardening with isolated webapp profiles.</p>
 
-<p align="center">Deterministic Firefox hardening and isolated webapp profiles.</p>
+
 
 ## quickstart
 
@@ -31,7 +37,7 @@ hifox status
 
 - Locks Firefox prefs with `lockPref()` so extensions, websites, and runtime code cannot override them.
 - Stops Firefox when deployed prefs or files drift from the repo.
-- Turns Firefox updates into reviewable pref diffs through `generated_pref_dump.txt`.
+- Turns Firefox updates into reviewable pref diffs through per-target `generated_pref_dump.<target>.txt`.
 - Runs webapps as isolated Firefox profiles with per-app unlocks for things like microphone, screen share, or DRM.
 - Treats the repo as the source of truth: edit config, save, deploy, verify.
 
@@ -59,7 +65,7 @@ config/policies.json               Firefox policy controls
 config/user.js                     per-profile canary marker
 config/autoconfig.js               bootstrap loader for autoconfig.cfg
 config/generate_pref_dump.cfg      Firefox pref dump generator
-config/generated_pref_dump.txt     reviewed Firefox runtime dump
+config/generated_pref_dump.<target>.txt    per-target reviewed Firefox runtime dump
 config/hifox.css                   default profile homepage CSS
 webapp/shared/webapp.cfg           shared webapp runtime behavior
 webapp/shared/webapp.css           webapp chrome CSS

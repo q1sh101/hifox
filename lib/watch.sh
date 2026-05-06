@@ -35,7 +35,7 @@ EOF
     local f
     for f in "${_dir}/config"/*; do
       [[ -f "${f}" ]] || continue
-      [[ "$(basename "${f}")" == "generated_pref_dump.txt" ]] && continue
+      case "$(basename "${f}")" in generated_pref_dump.txt|generated_pref_dump.*.txt) continue ;; esac
       echo "PathModified=${f}"
     done
     for f in "${_dir}/webapp/shared"/*; do

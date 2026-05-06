@@ -66,18 +66,29 @@ Default=1
 EOF
 }
 
+_make_verify_repo() {
+  local repo="$1"
+  mkdir -p "${repo}"
+  cp -a "${_dir}/config" "${repo}/config"
+  cp -a "${_dir}/webapp" "${repo}/webapp"
+}
+
+_gen_autoconfig_for() {
+  bash -c 'source "$1/lib/base.sh"; _dir="$2"; _generate_autoconfig' _ "${_dir}" "$1"
+}
+
 _make_verify_fixture() {
-  local root="$1"
+  local root="$1" repo="$2" dump="${3:-fixture.pref = true}"
   local profile="${root}/profile"
   local poldir="${root}/policies"
   local sdir="${root}/sys"
 
   mkdir -p "${profile}" "${poldir}" "${sdir}/defaults/pref"
-  cp "${_dir}/config/policies.json" "${poldir}/policies.json"
-  cp "${_dir}/config/autoconfig.js" "${sdir}/defaults/pref/autoconfig.js"
-  cp "${_dir}/config/user.js" "${profile}/user.js"
-  cp "${_dir}/config/generated_pref_dump.txt" "${profile}/generated_pref_dump.txt"
-  _in_base "_generate_autoconfig" > "${sdir}/autoconfig.cfg"
+  cp "${repo}/config/policies.json" "${poldir}/policies.json"
+  cp "${repo}/config/autoconfig.js" "${sdir}/defaults/pref/autoconfig.js"
+  cp "${repo}/config/user.js" "${profile}/user.js"
+  printf '%s\n' "${dump}" > "${profile}/generated_pref_dump.txt"
+  _gen_autoconfig_for "${repo}" > "${sdir}/autoconfig.cfg"
   printf 'user_pref("_user_js.canary", "hifox");\n' > "${profile}/prefs.js"
   touch -t 200001010000 \
     "${poldir}/policies.json" \
@@ -91,19 +102,23 @@ _make_verify_fixture() {
 
 _verify_fixture() {
   local root="$1"
+  local repo="${root}/repo"
   local profile poldir sdir
-  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}")
+  _make_verify_repo "${repo}"
+  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
+  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
 
   (
-    verify_root="${root}"
+    verify_repo="${repo}"
+    verify_root="${root}/flatpak"
     verify_profile="${profile}"
     verify_poldir="${poldir}"
     verify_sdir="${sdir}"
     source "${_dir}/lib/base.sh"
     source "${_dir}/lib/deploy.sh"
     source "${_dir}/lib/verify.sh"
-    _dir="${_dir}"
-    _active_installations() { printf 'fixture|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
+    _dir="${verify_repo}"
+    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
     _find_profile() { printf '%s\n' "${verify_profile}"; }
     _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
     _kill_firefox() { :; }
@@ -114,8 +129,11 @@ _verify_fixture() {
 
 _verify_rejects_pref_drift() {
   local root="$1"
+  local repo="${root}/repo"
   local profile poldir sdir
-  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}")
+  _make_verify_repo "${repo}"
+  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
+  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
   cat >> "${profile}/prefs.js" << 'EOF'
 user_pref("privacy.fingerprintingProtection", false);
 user_pref("privacy.resistFingerprinting", true);
@@ -123,15 +141,16 @@ EOF
   touch -t 200001020001 "${profile}/prefs.js"
 
   (
-    verify_root="${root}"
+    verify_repo="${repo}"
+    verify_root="${root}/flatpak"
     verify_profile="${profile}"
     verify_poldir="${poldir}"
     verify_sdir="${sdir}"
     source "${_dir}/lib/base.sh"
     source "${_dir}/lib/deploy.sh"
     source "${_dir}/lib/verify.sh"
-    _dir="${_dir}"
-    _active_installations() { printf 'fixture|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
+    _dir="${verify_repo}"
+    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
     _find_profile() { printf '%s\n' "${verify_profile}"; }
     _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
     _kill_firefox() { :; }
@@ -143,6 +162,54 @@ EOF
     cat "${root}/verify.out"
     return 1
   fi
+}
+
+_verify_writes_per_target_dumps() {
+  local root="$1"
+  local repo="${root}/repo"
+  local f_profile f_poldir f_sdir s_profile s_poldir s_sdir
+  _make_verify_repo "${repo}"
+  IFS='|' read -r f_profile f_poldir f_sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}" "target = flatpak")
+  IFS='|' read -r s_profile s_poldir s_sdir < <(_make_verify_fixture "${root}/standard" "${repo}" "target = standard")
+  rm -f \
+    "${repo}/config/generated_pref_dump.txt" \
+    "${repo}/config/generated_pref_dump.flatpak.txt" \
+    "${repo}/config/generated_pref_dump.standard.txt"
+
+  (
+    verify_repo="${repo}"
+    verify_f_root="${root}/flatpak"
+    verify_s_root="${root}/standard"
+    verify_f_profile="${f_profile}"
+    verify_s_profile="${s_profile}"
+    verify_f_poldir="${f_poldir}"
+    verify_s_poldir="${s_poldir}"
+    verify_f_sdir="${f_sdir}"
+    verify_s_sdir="${s_sdir}"
+    source "${_dir}/lib/base.sh"
+    source "${_dir}/lib/deploy.sh"
+    source "${_dir}/lib/verify.sh"
+    _dir="${verify_repo}"
+    _active_installations() {
+      printf 'flatpak|%s|%s|%s\n' "${verify_f_root}" "${verify_f_poldir}" "${verify_f_sdir}"
+      printf 'standard|%s|%s|%s\n' "${verify_s_root}" "${verify_s_poldir}" "${verify_s_sdir}"
+    }
+    _find_profile() {
+      case "$1" in
+        "${verify_f_root}") printf '%s\n' "${verify_f_profile}" ;;
+        "${verify_s_root}") printf '%s\n' "${verify_s_profile}" ;;
+        *) return 1 ;;
+      esac
+    }
+    _all_profile_paths() { _find_profile "$1"; }
+    _kill_firefox() { :; }
+    notify-send() { :; }
+    _hifox_verify
+  )
+
+  grep -qx 'target = flatpak' "${repo}/config/generated_pref_dump.flatpak.txt" \
+    && grep -qx 'target = standard' "${repo}/config/generated_pref_dump.standard.txt" \
+    && [[ ! -e "${repo}/config/generated_pref_dump.txt" ]]
 }
 
 _tmpdir=$(mktemp -d)
@@ -469,6 +536,7 @@ _test "deploy.sh re-locks on failure" grep -q 're-lock failed' "${_dir}/lib/depl
 
 _test "verify accepts deployed fixture"  _verify_fixture "${_tmpdir}/verify-pass"
 _test "verify rejects pref drift"        _verify_rejects_pref_drift "${_tmpdir}/verify-fail"
+_test "verify writes per-target pref dumps" _verify_writes_per_target_dumps "${_tmpdir}/verify-dumps"
 
 _test "log brackets aligned" bash -c "
   out=\$( { unset JOURNAL_STREAM; source '${_dir}/lib/base.sh'; log x; ok x; warn x; die x; } 2>&1 || true)
