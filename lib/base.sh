@@ -91,7 +91,7 @@ _require_firefox() {
     local target
     target="$(_read_target)"
     if [[ "${target}" == "all" ]]; then
-      die "no Firefox found (checked Flatpak + /usr/lib)"
+      die "no Firefox found (checked Flatpak, HIFOX_FIREFOX_DIR, /usr/lib*, /opt/firefox)"
     else
       die "no ${target} Firefox found - run: hifox install"
     fi

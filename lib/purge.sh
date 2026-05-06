@@ -5,7 +5,7 @@ hifox_purge() {
   local target="${1:-}"
   local installs
   installs=$(_list_installations)
-  [[ -n "${installs}" ]] || die "no Firefox found (checked Flatpak + /usr/lib)"
+  [[ -n "${installs}" ]] || die "no Firefox found (checked Flatpak, HIFOX_FIREFOX_DIR, /usr/lib*, /opt/firefox)"
 
   case "${target}" in
     --flatpak)  installs=$(echo "${installs}" | grep "^flatpak|" || true) ;;

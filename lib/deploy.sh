@@ -93,8 +93,10 @@ _deploy_homepage() {
   local profiles_dir="$1"
   local css_src="${_dir}/config/hifox.css"
   local logo_src="${_dir}/hifox.png"
-  [[ -f "${css_src}" ]] || return 0
-  [[ -f "${logo_src}" ]] || return 0
+  if [[ ! -f "${css_src}" || ! -f "${logo_src}" ]]; then
+    warn "homepage: assets missing"
+    return 0
+  fi
 
   local profile
   profile="$(_find_profile "${profiles_dir}")" || return 0
@@ -176,11 +178,7 @@ _deploy_webapp_profiles() {
 
   _fix_start_with_last_profile "${profiles_dir}"
 
-  local userjs_src="${_dir}/config/user.js"
   local css_src="${_dir}/webapp/shared/webapp.css"
-
-  local can_chattr=false
-  _can_sudo_chattr && can_chattr=true
 
   local wdir wname wprofile
   for wdir in "${_dir}/webapp"/*/; do
@@ -197,20 +195,10 @@ _deploy_webapp_profiles() {
     _register_profile "${profiles_dir}" "${wname}"
 
     if [[ -d "${wprofile}" ]]; then
-      _chattr_unlock "${wprofile}/user.js" 2>/dev/null || true
       if mkdir -p "${wprofile}/chrome" \
-        && cp "${css_src}" "${wprofile}/chrome/userChrome.css" \
-        && cp "${userjs_src}" "${wprofile}/user.js"; then
-        if ${can_chattr}; then
-          sudo -n chattr +i "${wprofile}/user.js" 2>/dev/null \
-            || warn "${wname}: user.js chattr +i failed - file remains writable"
-        fi
+        && cp "${css_src}" "${wprofile}/chrome/userChrome.css"; then
         ok "${wname}: profile ready"
       else
-        if ${can_chattr} && [[ -f "${wprofile}/user.js" ]]; then
-          sudo -n chattr +i "${wprofile}/user.js" 2>/dev/null \
-            || warn "${wname}: user.js re-lock failed - file remains writable"
-        fi
         warn "${wname}: file copy failed"
       fi
     else
@@ -284,10 +272,10 @@ hifox_deploy() {
     log "${type}"
     if (
       _deploy_policies "${poldir}" "${sdir}"
-      _deploy_userjs "${pdir}"
       _deploy_autoconfig "${sdir}"
       _deploy_homepage "${pdir}"
       _deploy_webapp_profiles "${pdir}"
+      _deploy_userjs "${pdir}"
     ); then :; else
       warn "${type}: deploy failed"
       had_error=true

@@ -25,7 +25,7 @@ case "${cmd}" in
     esac
     installs=$(_list_installations)
     if [[ "${target}" == "all" ]]; then
-      [[ -n "${installs}" ]] || die "no Firefox found (checked Flatpak + /usr/lib)"
+      [[ -n "${installs}" ]] || die "no Firefox found (checked Flatpak, HIFOX_FIREFOX_DIR, /usr/lib*, /opt/firefox)"
     else
       echo "${installs}" | grep -q "^${target}|" || die "no ${target} Firefox found"
     fi
