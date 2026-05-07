@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154  # _dir provided by hifox.sh
 
+_policy_count() {
+  command -v python3 &>/dev/null || { echo "?"; return; }
+  python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('policies',{})))" \
+    "$1" 2>/dev/null || echo "?"
+}
+
+_is_immutable() {
+  _can_sudo_chattr || return 1
+  sudo -n lsattr "$1" 2>/dev/null | awk '{print $1}' | grep -q i
+}
+
 _deploy_policies() {
   local policies_dir="$1" install_dir="${2:-}"
   local src="${_dir}/config/policies.json"
+  local dst="${policies_dir}/policies.json"
   [[ -f "${src}" ]] || die "policies.json not found in ${_dir}/config"
 
-  local has_python=false
-  _check_command python3 && has_python=true
-
-  if ${has_python}; then
+  if _check_command python3; then
     python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${src}" 2>/dev/null \
       || die "policies.json: invalid JSON"
   fi
@@ -20,30 +29,40 @@ _deploy_policies() {
   fi
 
   _ensure_dir "${policies_dir}" || die "cannot create ${policies_dir}"
+  if [[ "${policies_dir}" == "/etc/firefox/policies" ]]; then
+    sudo -n chmod 755 /etc/firefox "${policies_dir}" 2>/dev/null || true
+  fi
 
   local can_chattr=false
   _can_sudo_chattr && can_chattr=true
 
-  _chattr_unlock "${policies_dir}/policies.json" \
-    || die "cannot unlock ${policies_dir}/policies.json (immutable)"
-  if ! _install_file "${src}" "${policies_dir}/policies.json"; then
-    if ${can_chattr} && [[ -f "${policies_dir}/policies.json" ]]; then
-      sudo -n chattr +i "${policies_dir}/policies.json" 2>/dev/null \
+  # idempotent: skip chattr cycle when content matches (no-TTY watcher refire safe).
+  if _file_matches "${src}" "${dst}"; then
+    local tag=""
+    if _is_immutable "${dst}"; then
+      tag=", immutable"
+    elif ${can_chattr}; then
+      sudo -n chattr +i "${dst}" 2>/dev/null && tag=", immutable" \
         || warn "policies.json: re-lock failed - file remains writable"
     fi
-    die "cannot write ${policies_dir}/policies.json"
-  fi
-  local immutable=""
-  if ${can_chattr} && sudo -n chattr +i "${policies_dir}/policies.json" 2>/dev/null; then
-    immutable=", immutable"
+    ok "policies.json ($(_policy_count "${src}") policies${tag}, unchanged)"
+    return 0
   fi
 
-  local count="?"
-  if ${has_python}; then
-    count=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('policies',{})))" \
-      "${src}" 2>/dev/null || echo "?")
+  _chattr_unlock "${dst}" || die "cannot unlock ${dst} (immutable)"
+  if ! _install_file "${src}" "${dst}"; then
+    if ${can_chattr} && [[ -f "${dst}" ]]; then
+      sudo -n chattr +i "${dst}" 2>/dev/null \
+        || warn "policies.json: re-lock failed - file remains writable"
+    fi
+    die "cannot write ${dst}"
   fi
-  ok "policies.json (${count} policies${immutable})"
+  local tag=""
+  if ${can_chattr}; then
+    sudo -n chattr +i "${dst}" 2>/dev/null && tag=", immutable" \
+      || warn "policies.json: re-lock failed - file remains writable"
+  fi
+  ok "policies.json ($(_policy_count "${src}") policies${tag})"
 }
 
 _deploy_userjs() {
@@ -62,6 +81,15 @@ _deploy_userjs() {
     [[ -d "${profile}" ]] || continue
     ((found++)) || true
     target="${profile}/user.js"
+    # idempotent: skip chattr cycle when user.js matches (no-TTY watcher refire safe).
+    if _file_matches "${src}" "${target}"; then
+      if ${can_chattr} && ! _is_immutable "${target}"; then
+        sudo -n chattr +i "${target}" 2>/dev/null \
+          || warn "$(basename "${profile}"): user.js re-lock failed - file remains writable"
+      fi
+      ((deployed++)) || true
+      continue
+    fi
     if ! _chattr_unlock "${target}"; then
       warn "cannot unlock user.js in $(basename "${profile}") (immutable)"; continue
     fi
@@ -74,7 +102,7 @@ _deploy_userjs() {
     fi
     if ${can_chattr}; then
       sudo -n chattr +i "${target}" 2>/dev/null \
-        || warn "$(basename "${profile}"): user.js chattr +i failed - file remains writable"
+        || warn "$(basename "${profile}"): user.js re-lock failed - file remains writable"
     fi
     ((deployed++)) || true
   done < <(_all_profile_paths "${profiles_dir}")
@@ -95,20 +123,31 @@ _deploy_userjs() {
 _deploy_homepage() {
   local profiles_dir="$1"
   local css_src="${_dir}/config/hifox.css"
-  local logo_src="${_dir}/hifox.png"
+  local logo_src="${_dir}/docs/hifox.png"
   if [[ ! -f "${css_src}" || ! -f "${logo_src}" ]]; then
     warn "homepage: assets missing"
     return 0
   fi
+  [[ -d "${profiles_dir}" ]] || return 0
 
-  local profile
-  profile="$(_find_profile "${profiles_dir}")" || return 0
-  mkdir -p "${profile}/chrome"
-  if cp "${css_src}" "${profile}/chrome/userContent.css" \
-    && cp "${logo_src}" "${profile}/chrome/hifox.png"; then
-    ok "homepage: hifox branding"
-  else
-    warn "homepage: copy failed"
+  local count=0 candidates=0 p name
+  for p in "${profiles_dir}"/*; do
+    [[ -d "${p}" ]] || continue
+    name=$(basename "${p}")
+    case "${name}" in
+      default-release|default|*.default-release*|*.default) ;;
+      *) continue ;;
+    esac
+    ((candidates++)) || true
+    mkdir -p "${p}/chrome"
+    cp "${css_src}" "${p}/chrome/userContent.css" 2>/dev/null && \
+    cp "${logo_src}" "${p}/chrome/hifox.png" 2>/dev/null && \
+    ((count++)) || true
+  done
+  if (( count > 0 )); then
+    ok "homepage: hifox branding -> ${count} profiles"
+  elif (( candidates > 0 )); then
+    warn "homepage: copy failed (${candidates} candidates, 0 succeeded)"
   fi
 }
 
@@ -130,18 +169,29 @@ _deploy_autoconfig() {
 
   _ensure_dir "${sysconfig_dir}/defaults/pref" || die "cannot create ${sysconfig_dir}/defaults/pref"
 
-  _install_file "${_dir}/config/autoconfig.js" "${sysconfig_dir}/defaults/pref/autoconfig.js" \
-    || die "cannot write autoconfig.js to ${sysconfig_dir}"
+  # idempotent: skip writes when content matches (no-TTY watcher refire safe).
+  local js_dst="${sysconfig_dir}/defaults/pref/autoconfig.js"
+  if ! _file_matches "${_dir}/config/autoconfig.js" "${js_dst}"; then
+    _install_file "${_dir}/config/autoconfig.js" "${js_dst}" \
+      || die "cannot write autoconfig.js to ${sysconfig_dir}"
+  fi
 
   local tmp
   tmp=$(mktemp)
-  trap 'rm -f "${tmp:?}"' EXIT
+  # ${tmp:-} keeps EXIT trap safe after the function-local goes out of scope.
+  trap 'rm -f "${tmp:-}"' EXIT
   _generate_autoconfig > "${tmp}"
-  _install_file "${tmp}" "${sysconfig_dir}/autoconfig.cfg" \
-    || { rm -f "${tmp:?}"; die "cannot write autoconfig.cfg to ${sysconfig_dir}"; }
-  rm -f "${tmp:?}"
+  local cfg_dst="${sysconfig_dir}/autoconfig.cfg"
+  if _file_matches "${tmp}" "${cfg_dst}"; then
+    rm -f "${tmp}"
+    trap - EXIT
+    ok "autoconfig.cfg (unchanged)"
+    return 0
+  fi
+  _install_file "${tmp}" "${cfg_dst}" \
+    || die "cannot write autoconfig.cfg to ${sysconfig_dir}"
+  rm -f "${tmp}"
   trap - EXIT
-
   ok "autoconfig.cfg (generated)"
 }
 
@@ -316,8 +366,8 @@ hifox_deploy() {
     if (
       _deploy_policies "${poldir}" "${sdir}"
       _deploy_autoconfig "${sdir}"
-      _deploy_homepage "${pdir}"
       _deploy_webapp_profiles "${pdir}"
+      _deploy_homepage "${pdir}"
       _deploy_userjs "${pdir}"
     ); then :; else
       warn "${type}: deploy failed"

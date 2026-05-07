@@ -599,6 +599,90 @@ _test "log brackets aligned" bash -c "
   '
 "
 
+_test "verify checks reference real lockPrefs in global_lockprefs.cfg" bash -c '
+  # extract pref names from verify.sh checks array and assert each has a
+  # lockPref() entry in global_lockprefs.cfg. catches drift where someone
+  # changes a pref name in global without updating verify.
+  glb="$1/config/global_lockprefs.cfg"
+  vfy="$1/lib/verify.sh"
+  missing=0
+  while read -r key; do
+    [[ -n "${key}" ]] || continue
+    # _user_js.canary is set by user.js (verify checks it as a profile load
+    # marker), not by autoconfig lockPref - skip the lookup.
+    [[ "${key}" == _user_js.* ]] && continue
+    grep -qE "lockPref\\(\"${key}\"" "${glb}" \
+      || { echo "verify references pref not locked in global: ${key}"; missing=1; }
+  done < <(grep -oE "^[[:space:]]+'\''[a-z_][a-zA-Z0-9._-]+\\|" "${vfy}" \
+            | sed -E "s/^[[:space:]]+'\''//;s/\\|$//")
+  exit ${missing}
+' _ "${_dir}"
+
+_test "status flags chrome drift end-to-end" bash -c '
+  set -e
+  src="$1"
+  fix=$(mktemp -d)
+  trap "rm -rf \"${fix}\"" EXIT
+  mkdir -p "${fix}/.mozilla/firefox/abc.default-release/chrome"
+  mkdir -p "${fix}/.config/hifox"
+  cp "${src}/config/user.js" "${fix}/.mozilla/firefox/abc.default-release/user.js"
+  cp "${src}/config/hifox.css" "${fix}/.mozilla/firefox/abc.default-release/chrome/userContent.css"
+  cp "${src}/docs/hifox.png" "${fix}/.mozilla/firefox/abc.default-release/chrome/hifox.png"
+  printf "/* drift */\n" >> "${fix}/.mozilla/firefox/abc.default-release/chrome/userContent.css"
+  cat > "${fix}/.mozilla/firefox/profiles.ini" <<EOF
+[General]
+StartWithLastProfile=1
+[Profile0]
+Name=default
+IsRelative=1
+Path=abc.default-release
+Default=1
+EOF
+  echo standard > "${fix}/.config/hifox/target"
+
+  HOME="${fix}" XDG_CONFIG_HOME="${fix}/.config" bash -c "
+    source \"${src}/lib/base.sh\"
+    source \"${src}/lib/status.sh\"
+    _dir=\"${src}\"
+    _active_installations() { echo \"standard|\${HOME}/.mozilla/firefox|/tmp/_na/policies|/tmp/_na\"; }
+    hifox_status 2>&1
+  " | grep -qE "DRIFT userContent"
+' _ "${_dir}"
+
+_test "status reports chrome synced on pristine fixture" bash -c '
+  set -e
+  src="$1"
+  fix=$(mktemp -d)
+  trap "rm -rf \"${fix}\"" EXIT
+  mkdir -p "${fix}/.mozilla/firefox/abc.default-release/chrome"
+  mkdir -p "${fix}/.config/hifox"
+  cp "${src}/config/user.js" "${fix}/.mozilla/firefox/abc.default-release/user.js"
+  cp "${src}/config/hifox.css" "${fix}/.mozilla/firefox/abc.default-release/chrome/userContent.css"
+  cp "${src}/docs/hifox.png" "${fix}/.mozilla/firefox/abc.default-release/chrome/hifox.png"
+  cat > "${fix}/.mozilla/firefox/profiles.ini" <<EOF
+[General]
+StartWithLastProfile=1
+[Profile0]
+Name=default
+IsRelative=1
+Path=abc.default-release
+Default=1
+EOF
+  echo standard > "${fix}/.config/hifox/target"
+
+  HOME="${fix}" XDG_CONFIG_HOME="${fix}/.config" bash -c "
+    source \"${src}/lib/base.sh\"
+    source \"${src}/lib/status.sh\"
+    _dir=\"${src}\"
+    _active_installations() { echo \"standard|\${HOME}/.mozilla/firefox|/tmp/_na/policies|/tmp/_na\"; }
+    out=\$(hifox_status 2>&1)
+    printf %s \"\${out}\" | awk \"/chrome assets/{p=1;next}/policies.json|autoconfig.cfg/{p=0}p\" \
+      | grep -qE \"abc\\.default-release.*synced\" \
+      && ! ( printf %s \"\${out}\" | awk \"/chrome assets/{p=1;next}/policies.json|autoconfig.cfg/{p=0}p\" \
+              | grep -qE \"DRIFT\" )
+  "
+' _ "${_dir}"
+
 _test "no dead shell functions" bash -c '
   files=("$@")
   mapfile -t funcs < <(

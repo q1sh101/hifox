@@ -85,26 +85,23 @@ _require_firefox() {
   target="$(_read_target)"
   [[ -n "${target}" ]] || die "hifox not installed - run: hifox install <--flatpak|--standard>"
   installs=$(_active_installations)
-  if [[ -z "${installs}" ]]; then
-    local target
-    target="$(_read_target)"
-    if [[ "${target}" == "all" ]]; then
-      die "no Firefox found (checked Flatpak, HIFOX_FIREFOX_DIR, /usr/lib*, /opt/firefox)"
-    else
-      die "no ${target} Firefox found - run: hifox install"
-    fi
-  fi
+  [[ -n "${installs}" ]] || die "no ${target} Firefox found - run: hifox install <--flatpak|--standard>"
 }
 
 _ensure_dir() {
   local d="$1"
   [[ -d "${d}" ]] && return 0
+  sudo -n test -d "${d}" 2>/dev/null && return 0
   mkdir -p "${d}" 2>/dev/null && return 0
   if sudo -n mkdir -p "${d}" 2>/dev/null; then
     sudo -n chmod 755 "${d}" 2>/dev/null || true
     return 0
   fi
   return 1
+}
+
+_file_matches() {  # <src> <dst> - 0 if dst exists and matches src
+  [[ -f "$2" ]] && cmp -s "$1" "$2" 2>/dev/null
 }
 
 _install_file() {
@@ -240,7 +237,7 @@ _chattr_unlock() {
     return
   fi
   if lsattr "${f}" 2>/dev/null | awk '{print $1}' | grep -q 'i'; then
-    echo "  [hifox] sudo required to unlock immutable: $(basename "${f}")" >&2
+    warn "sudo required to unlock immutable: $(basename "${f}")"
     if (exec </dev/tty) 2>/dev/null; then
       # shellcheck disable=SC2024  # redirect is intentional for tty input
       sudo chattr -i "${f}" </dev/tty || return 1
@@ -261,9 +258,14 @@ _is_valid_webapp_name() {
 }
 
 _generate_autoconfig() {
+  local wcfg="${_dir}/webapp/shared/webapp.cfg"
+  # Guard the webapp.cfg split marker; awk generation depends on exactly one.
+  local _mn
+  _mn=$(grep -c 'per-webapp overrides' "${wcfg}" 2>/dev/null) || _mn=0
+  (( _mn == 1 )) || die "webapp.cfg: 'per-webapp overrides' marker count=${_mn}, expected 1"
+
   cat "${_dir}/config/global_lockprefs.cfg"
 
-  local wcfg="${_dir}/webapp/shared/webapp.cfg"
   awk '{print} /per-webapp overrides/{exit}' "${wcfg}"
 
   local wdir wn
