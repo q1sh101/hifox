@@ -34,17 +34,16 @@ _list_installations() {
     sdir="${HOME}/.local/share/flatpak/extension/org.mozilla.firefox.systemconfig/${arch}/stable"
     pdir=""
     local cand
-    # Flatpak may leave multiple migrated profile roots; prefer the active one.
-    local newest=0 m first_existing=""
-    for cand in "${fp_home}/config/mozilla/firefox" "${fp_home}/.config/mozilla/firefox" "${fp_home}/.mozilla/firefox"; do
-      [[ -d "${cand}" ]] || continue
-      [[ -z "${first_existing}" ]] && first_existing="${cand}"
-      m=$(find "${cand}" -maxdepth 2 -name 'prefs.js' -printf '%T@\n' 2>/dev/null \
-          | sort -rn | head -1 | cut -d. -f1)
-      [[ -z "${m}" ]] && continue
-      if (( m > newest )); then newest=${m}; pdir="${cand}"; fi
+    local cands=("${fp_home}/config/mozilla/firefox" "${fp_home}/.config/mozilla/firefox" "${fp_home}/.mozilla/firefox")
+    # Flatpak migration may leave multiple profile roots; prefer modern path over mtime.
+    for cand in "${cands[@]}"; do
+      [[ -d "${cand}" && -f "${cand}/profiles.ini" ]] && pdir="${cand}" && break
     done
-    [[ -n "${pdir}" ]] || pdir="${first_existing}"
+    if [[ -z "${pdir}" ]]; then
+      for cand in "${cands[@]}"; do
+        [[ -d "${cand}" ]] && pdir="${cand}" && break
+      done
+    fi
     [[ -n "${pdir}" ]] || pdir="${fp_home}/.mozilla/firefox"
     echo "flatpak|${pdir}|${sdir}/policies|${sdir}"
   fi
@@ -71,21 +70,20 @@ _save_target() {
 _read_target() {
   local f
   f="$(_target_file)"
-  [[ -f "${f}" ]] && cat "${f}" || echo "all"
+  [[ -f "${f}" ]] && cat "${f}" || echo ""
 }
 
 _active_installations() {
   local target
   target="$(_read_target)"
-  if [[ "${target}" == "all" ]]; then
-    _list_installations
-  else
-    _list_installations | grep "^${target}|" || true
-  fi
+  [[ -n "${target}" ]] || return 0
+  _list_installations | grep "^${target}|" || true
 }
 
 _require_firefox() {
-  local installs
+  local installs target
+  target="$(_read_target)"
+  [[ -n "${target}" ]] || die "hifox not installed - run: hifox install <--flatpak|--standard>"
   installs=$(_active_installations)
   if [[ -z "${installs}" ]]; then
     local target

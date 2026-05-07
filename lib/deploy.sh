@@ -176,8 +176,10 @@ _fix_start_with_last_profile() {
 
 _deploy_webapp_profiles() {
   local profiles_dir="$1"
-  [[ -d "${profiles_dir}" ]] || return 0
-  [[ -f "${profiles_dir}/profiles.ini" ]] || return 0
+  mkdir -p "${profiles_dir}"
+  if [[ ! -f "${profiles_dir}/profiles.ini" ]]; then
+    printf '[General]\nStartWithLastProfile=1\nVersion=2\n' > "${profiles_dir}/profiles.ini"
+  fi
 
   _fix_start_with_last_profile "${profiles_dir}"
 
@@ -210,11 +212,41 @@ _deploy_webapp_profiles() {
   done
 }
 
-_deploy_webapp_desktop() {
+_deploy_desktop_entries() {
   local launcher="${_dir}/launch.sh"
   local desktop_dir
   desktop_dir="$(_desktop_dir)"
   local pixmap_dir="${HOME}/.local/share/pixmaps"
+
+  local t pdir poldir sdir
+  IFS='|' read -r t pdir poldir sdir < <(_active_installations | head -1)
+  [[ -n "${t}" ]] || return 0
+
+  local icon="org.mozilla.firefox"
+  if [[ "${t}" == "standard" ]]; then
+    icon="firefox"
+    [[ -f "${sdir}/browser/chrome/icons/default/default128.png" ]] && \
+      icon="${sdir}/browser/chrome/icons/default/default128.png"
+  fi
+
+  mkdir -p "${desktop_dir}"
+  local expected=()
+  local ff_basename="firefox.desktop"
+  [[ "${t}" == "flatpak" ]] && ff_basename="org.mozilla.firefox.desktop"
+  local ff_entry="${desktop_dir}/${ff_basename}"
+  printf '%s\n' \
+    "[Desktop Entry]" \
+    "Name=Firefox" \
+    "Comment=hifox-managed Firefox" \
+    "Exec=\"${launcher}\" --target ${t} %u" \
+    "Icon=${icon}" \
+    "Type=Application" \
+    "Categories=Network;WebBrowser;" \
+    "StartupNotify=true" \
+    "StartupWMClass=firefox" > "${ff_entry}"
+  chmod 644 "${ff_entry}" 2>/dev/null || true
+  expected+=("${ff_basename}")
+  ok "${t}: Firefox shadow -> ${ff_basename}"
 
   local wdir wname
   for wdir in "${_dir}/webapp"/*/; do
@@ -234,33 +266,41 @@ _deploy_webapp_desktop() {
       chmod 644 "${icon_target}" 2>/dev/null || true
     fi
 
-    if [[ -f "${wdir}/${wname}.desktop" ]]; then
-      mkdir -p "${desktop_dir}"
-      local desktop_file="${desktop_dir}/org.mozilla.firefox.${wname}-web.desktop"
-      local desktop_content launcher_quoted
-      desktop_content=$(<"${wdir}/${wname}.desktop")
-      launcher_quoted="\"${launcher}\""
-      printf '%s\n' "${desktop_content//__LAUNCH_SH__/${launcher_quoted}}" > "${desktop_file}"
-      if [[ -n "${icon_target}" ]]; then
-        sed -i "s|^Icon=.*$|Icon=${icon_target}|" "${desktop_file}"
-      fi
-      chmod 644 "${desktop_file}" 2>/dev/null || true
-      ok "${wname}: .desktop -> $(basename "${desktop_file}")"
-    fi
+    [[ -f "${wdir}/${wname}.desktop" ]] || continue
+    local desktop_file="${desktop_dir}/org.mozilla.firefox.${wname}-web.desktop"
+    local content
+    content=$(<"${wdir}/${wname}.desktop")
+    content="${content//__LAUNCH_SH__/\"${launcher}\" --target ${t}}"
+    printf '%s\n' "${content}" > "${desktop_file}"
+    [[ -n "${icon_target}" ]] && sed -i "s|^Icon=.*$|Icon=${icon_target}|" "${desktop_file}"
+    chmod 644 "${desktop_file}" 2>/dev/null || true
+    expected+=("$(basename "${desktop_file}")")
+    ok "${wname}: .desktop -> $(basename "${desktop_file}")"
   done
 
-  local entry
-  for entry in "${desktop_dir}"/org.mozilla.firefox.*-web.desktop; do
+  local entry exp keep
+  for entry in "${desktop_dir}"/org.mozilla.firefox.*-web.desktop \
+    "${desktop_dir}"/org.mozilla.firefox.*-web@*.desktop \
+    "${desktop_dir}"/org.mozilla.firefox.hifox-*.desktop \
+    "${desktop_dir}"/org.mozilla.firefox.desktop \
+    "${desktop_dir}"/firefox.desktop; do
     [[ -f "${entry}" ]] || continue
-    local entry_wname
-    entry_wname=$(basename "${entry}")
-    entry_wname="${entry_wname#org.mozilla.firefox.}"
-    entry_wname="${entry_wname%-web.desktop}"
-    if [[ ! -d "${_dir}/webapp/${entry_wname}" ]]; then
-      rm -f "${entry}"
-      command rm -f "${pixmap_dir}/${entry_wname}.png" "${pixmap_dir}/${entry_wname}"-[0-9]*.png 2>/dev/null || true
-      ok "pruned orphan: ${entry_wname}"
+    keep=false
+    for exp in "${expected[@]}"; do
+      [[ "$(basename "${entry}")" == "${exp}" ]] && keep=true && break
+    done
+    ${keep} && continue
+    local stripped
+    stripped=$(basename "${entry}")
+    stripped="${stripped#org.mozilla.firefox.}"
+    stripped="${stripped%.desktop}"
+    stripped="${stripped%@*}"
+    stripped="${stripped%-web}"
+    rm -f "${entry}"
+    if [[ ! -d "${_dir}/webapp/${stripped}" ]]; then
+      command rm -f "${pixmap_dir}/${stripped}.png" "${pixmap_dir}/${stripped}"-[0-9]*.png 2>/dev/null || true
     fi
+    ok "pruned: $(basename "${entry}")"
   done
 }
 
@@ -285,15 +325,16 @@ hifox_deploy() {
     fi
   done < <(_active_installations)
 
-  _deploy_webapp_desktop
+  if ${had_error}; then
+    die "deploy failed - skipping .desktop entries (no orphan icons)"
+  fi
+
+  _deploy_desktop_entries
   echo ""
   if systemctl --user is-active hifox-watch.path &>/dev/null; then
     (hifox_watch_install) 2>/dev/null || warn "watcher refresh failed - run: hifox watch install"
   fi
 
-  if ${had_error}; then
-    die "some installations failed - see above"
-  fi
   hifox_clean
   log "done - restart Firefox -> hifox verify"
 }

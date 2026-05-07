@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-_find_firefox() {
-  local target_file="${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/target"
-  local target="all"
-  [[ -f "${target_file}" ]] && target=$(<"${target_file}")
+_pinned_target=""
+if [[ "${1:-}" == "--target" ]]; then
+  case "${2:-}" in
+    flatpak|standard) _pinned_target="${2}"; shift 2 ;;
+    *) echo "error: --target requires flatpak or standard" >&2; exit 1 ;;
+  esac
+fi
 
-  if [[ "${target}" != "standard" ]]; then
-    if command -v flatpak &>/dev/null && flatpak info org.mozilla.firefox &>/dev/null; then
-      echo "flatpak"
-      return 0
-    fi
+_find_firefox() {
+  local target="${_pinned_target}"
+  if [[ -z "${target}" ]]; then
+    local target_file="${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/target"
+    [[ -f "${target_file}" ]] && target=$(<"${target_file}")
   fi
-  if [[ "${target}" != "flatpak" ]]; then
+
+  if [[ "${target}" == "flatpak" ]]; then
+    command -v flatpak &>/dev/null && flatpak info org.mozilla.firefox &>/dev/null \
+      && { echo "flatpak"; return 0; }
+  fi
+  if [[ "${target}" == "standard" || -z "${target}" ]]; then
     local cand bin
     for cand in ${HIFOX_FIREFOX_DIR:+"${HIFOX_FIREFOX_DIR}"} /usr/lib/firefox /usr/lib64/firefox /usr/lib/firefox-esr /opt/firefox; do
       [[ -f "${cand}/application.ini" ]] || continue
@@ -28,9 +36,10 @@ _ff=$(_find_firefox) || { echo "error: no Firefox found" >&2; exit 1; }
 
 _run() {
   # shellcheck disable=SC2086  # word-split intentional
-  if [[ -n "${HIFOX_LAUNCHER:-}" ]]; then
+  if [[ -z "${_pinned_target}" && -n "${HIFOX_LAUNCHER:-}" ]]; then
     exec ${HIFOX_LAUNCHER} "$@"
-  elif [[ "${_ff}" == "flatpak" ]]; then
+  fi
+  if [[ "${_ff}" == "flatpak" ]]; then
     exec flatpak run org.mozilla.firefox "$@"
   else
     exec "${_ff}" "$@"
@@ -38,7 +47,7 @@ _run() {
 }
 
 _run_direct() {
-  # Global launch wrappers have no per-webapp context; hooks handle that.
+  # webapp/menu paths skip HIFOX_LAUNCHER; per-webapp hooks own that wrapping
   if [[ "${_ff}" == "flatpak" ]]; then
     exec flatpak run org.mozilla.firefox "$@"
   else
@@ -51,18 +60,18 @@ _clean_stale_locks() {
   if pgrep -x 'firefox(-esr)?(-bin)?' >/dev/null 2>&1; then return; fi
   local base
   if [[ "${_ff}" == "flatpak" ]]; then
-    # Flatpak may leave multiple migrated profile roots; prefer the active one.
-    local fp="${HOME}/.var/app/org.mozilla.firefox" cand newest=0 m first_existing=""
+    # Flatpak migration may leave multiple profile roots; prefer modern path over mtime.
+    local fp="${HOME}/.var/app/org.mozilla.firefox" cand
+    local cands=("${fp}/config/mozilla/firefox" "${fp}/.config/mozilla/firefox" "${fp}/.mozilla/firefox")
     base=""
-    for cand in "${fp}/config/mozilla/firefox" "${fp}/.config/mozilla/firefox" "${fp}/.mozilla/firefox"; do
-      [[ -d "${cand}" ]] || continue
-      [[ -z "${first_existing}" ]] && first_existing="${cand}"
-      m=$(find "${cand}" -maxdepth 2 -name 'prefs.js' -printf '%T@\n' 2>/dev/null \
-          | sort -rn | head -1 | cut -d. -f1)
-      [[ -z "${m}" ]] && continue
-      if (( m > newest )); then newest=${m}; base="${cand}"; fi
+    for cand in "${cands[@]}"; do
+      [[ -d "${cand}" && -f "${cand}/profiles.ini" ]] && base="${cand}" && break
     done
-    [[ -n "${base}" ]] || base="${first_existing}"
+    if [[ -z "${base}" ]]; then
+      for cand in "${cands[@]}"; do
+        [[ -d "${cand}" ]] && base="${cand}" && break
+      done
+    fi
     [[ -n "${base}" ]] || base="${fp}/.mozilla/firefox"
   else
     base="${HOME}/.mozilla/firefox"

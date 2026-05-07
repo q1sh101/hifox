@@ -26,8 +26,6 @@ EOF
     echo ""
     echo "[Path]"
     echo "PathModified=${_dir}/hifox.sh"
-    echo "PathModified=${_dir}/config/user.js"
-    echo "PathModified=${_dir}/config/policies.json"
     for f in "${_dir}/lib"/*.sh; do
       [[ -f "${f}" ]] && echo "PathModified=${f}"
     done
@@ -35,7 +33,7 @@ EOF
     local f
     for f in "${_dir}/config"/*; do
       [[ -f "${f}" ]] || continue
-      case "$(basename "${f}")" in generated_pref_dump.txt|generated_pref_dump.*.txt) continue ;; esac
+      case "$(basename "${f}")" in generated_pref_dump.*.txt) continue ;; esac
       echo "PathModified=${f}"
     done
     for f in "${_dir}/webapp/shared"/*; do
@@ -51,6 +49,10 @@ EOF
         echo "PathModified=${f}"
       done
     done
+    local _t _pd _pol _sd
+    while IFS='|' read -r _t _pd _pol _sd; do
+      echo "PathChanged=${_pd}/profiles.ini"
+    done < <(_active_installations)
     echo "Unit=hifox-deploy.service"
   } > "${udir}/hifox-watch.path"
   cat >> "${udir}/hifox-watch.path" <<EOF
@@ -107,10 +109,10 @@ WantedBy=timers.target
 EOF
 
   systemctl --user daemon-reload
-  systemctl --user enable --now hifox-watch.path \
-    || die "failed to enable hifox-watch.path"
-  systemctl --user enable --now hifox-verify.path \
-    || die "failed to enable hifox-verify.path"
+  for unit in hifox-watch.path hifox-verify.path; do
+    systemctl --user enable "${unit}" || die "failed to enable ${unit}"
+    systemctl --user restart "${unit}" || die "failed to restart ${unit}"
+  done
   systemctl --user enable --now hifox-verify.timer \
     || die "failed to enable hifox-verify.timer"
 

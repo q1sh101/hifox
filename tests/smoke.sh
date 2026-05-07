@@ -252,11 +252,13 @@ echo "=== usage / dispatch ==="
 _test_fail "no args"            bash "${_dir}/hifox.sh"
 _test_fail "bad command"        bash "${_dir}/hifox.sh" badcmd
 _test_fail "deploy with arg"    bash "${_dir}/hifox.sh" deploy extra
+_test_fail "install no flag"    bash "${_dir}/hifox.sh" install
 _test_fail "install bad flag"   bash "${_dir}/hifox.sh" install --garbage
 _test_fail "purge bad flag"     bash "${_dir}/hifox.sh" purge --garbage
 _test_fail "watch no sub"       bash "${_dir}/hifox.sh" watch
 _test_fail "watch bad sub"      bash "${_dir}/hifox.sh" watch evil
 _test_fail "install-systemconfig with arg" bash "${_dir}/hifox.sh" install-systemconfig extra
+_test_fail "launch.sh rejects bad --target" bash "${_dir}/launch.sh" --target garbage
 
 for cmd in install deploy verify clean purge status logs watch install-systemconfig; do
   _test "usage lists: ${cmd}" bash -c "bash '${_dir}/hifox.sh' 2>&1 | grep -qE ' ${cmd}( |$)'"
@@ -284,7 +286,7 @@ echo ""
 echo "=== target persistence ==="
 _test "save+read round-trip"   _with_xdg "${_tmpdir}/x1" "_save_target flatpak;  [[ \$(_read_target) == flatpak ]]"
 _test "persists standard"      _with_xdg "${_tmpdir}/x2" "_save_target standard; [[ \$(_read_target) == standard ]]"
-_test "default to all"         _with_xdg "${_tmpdir}/x3" "[[ \$(_read_target) == all ]]"
+_test "default empty"          _with_xdg "${_tmpdir}/x3" "[[ -z \$(_read_target) ]]"
 _test "overwrite previous"     _with_xdg "${_tmpdir}/x4" "_save_target flatpak; _save_target standard; [[ \$(_read_target) == standard ]]"
 
 echo ""
@@ -470,6 +472,48 @@ for _wn in "${_webapps[@]}"; do
 done
 
 echo ""
+echo "=== .desktop generation (single-target shadow) ==="
+
+_dt_home="${_tmpdir}/desktop_home"
+_dapp="${_dt_home}/.local/share/applications"
+
+_dt_run() {
+  local target="$1"
+  rm -rf "${_dt_home}"
+  mkdir -p "${_dapp}"
+  HOME="${_dt_home}" XDG_DATA_HOME="${_dt_home}/.local/share" \
+    _DT_DIR="${_dir}" _DT_TARGET="${target}" \
+    bash -c '
+      set -e
+      source "${_DT_DIR}/lib/base.sh"
+      source "${_DT_DIR}/lib/deploy.sh"
+      _dir="${_DT_DIR}"
+      _active_installations() { printf "%s|/tmp/p|/tmp/pol|/tmp/sd\n" "${_DT_TARGET}"; }
+      _deploy_desktop_entries > /dev/null
+    '
+}
+
+_dt_run flatpak
+_test "flatpak shadow exists"           test -f "${_dapp}/org.mozilla.firefox.desktop"
+_test "flatpak shadow Name=Firefox"     grep -qx 'Name=Firefox' "${_dapp}/org.mozilla.firefox.desktop"
+_test "flatpak shadow Exec"             grep -q -- '--target flatpak %u' "${_dapp}/org.mozilla.firefox.desktop"
+_test "flatpak shadow not hidden"       bash -c "! grep -qE '^(Hidden|NoDisplay)=true' '${_dapp}/org.mozilla.firefox.desktop'"
+_test "no hifox-flatpak alias"          bash -c "! test -f '${_dapp}/org.mozilla.firefox.hifox-flatpak.desktop'"
+_test "no hifox-standard alias"         bash -c "! test -f '${_dapp}/org.mozilla.firefox.hifox-standard.desktop'"
+for _wn in "${_webapps[@]}"; do
+  _wn_name=$(grep -m1 '^Name=' "${_dir}/webapp/${_wn}/${_wn}.desktop" | cut -d= -f2-)
+  _wtrack "${_wn}" _test "${_wn}: webapp .desktop exists"  test -f "${_dapp}/org.mozilla.firefox.${_wn}-web.desktop"
+  _wtrack "${_wn}" _test "${_wn}: no @-suffix"             bash -c "! test -f '${_dapp}/org.mozilla.firefox.${_wn}-web@flatpak.desktop'"
+  _wtrack "${_wn}" _test "${_wn}: Exec --target"           grep -q -- "--target flatpak --webapp ${_wn}" "${_dapp}/org.mozilla.firefox.${_wn}-web.desktop"
+  _wtrack "${_wn}" _test "${_wn}: Name=${_wn_name}"        grep -qx "Name=${_wn_name}" "${_dapp}/org.mozilla.firefox.${_wn}-web.desktop"
+done
+
+_dt_run standard
+_test "standard shadow exists"          test -f "${_dapp}/firefox.desktop"
+_test "standard shadow Exec"            grep -q -- '--target standard %u' "${_dapp}/firefox.desktop"
+_test "standard no flatpak-named entry" bash -c "! test -f '${_dapp}/org.mozilla.firefox.desktop'"
+
+echo ""
 echo "=== profiles.ini mutation ==="
 _rp="${_tmpdir}/rp"
 _sample_webapp="sample-webapp"
@@ -514,6 +558,9 @@ _test "fix no-op when already 1" _in_deploy "
   [[ \"\${before}\" == \"\${after}\" ]]
 "
 
+_test "watch.sh wires profiles.ini path" \
+  grep -q 'PathChanged=.*profiles.ini' "${_dir}/lib/watch.sh"
+
 echo ""
 echo "=== policies.json ==="
 _test "valid JSON"               python3 -c "import json,sys; json.load(open('${_dir}/config/policies.json'))"
@@ -532,7 +579,9 @@ done
 _test "deploy.sh trap rm tmp"        grep -q 'trap.*rm.*tmp.*EXIT'   "${_dir}/lib/deploy.sh"
 _test "systemconfig.sh trap rm stage" grep -q 'trap.*rm.*stage.*EXIT' "${_dir}/lib/systemconfig.sh"
 
-_test "deploy.sh re-locks on failure" grep -q 're-lock failed' "${_dir}/lib/deploy.sh"
+_test "deploy.sh keeps re-lock warn string" grep -q 're-lock failed' "${_dir}/lib/deploy.sh"
+_test "install case calls hifox_install_systemconfig" \
+  bash -c "awk '/^  install\\)/,/^    ;;/' '${_dir}/hifox.sh' | grep -q 'hifox_install_systemconfig'"
 
 _test "verify accepts deployed fixture"  _verify_fixture "${_tmpdir}/verify-pass"
 _test "verify rejects pref drift"        _verify_rejects_pref_drift "${_tmpdir}/verify-fail"
