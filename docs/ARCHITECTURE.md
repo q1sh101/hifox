@@ -2,9 +2,9 @@
 
 hifox enforces Firefox hardening from a repo, on both standard and Flatpak
 Firefox: prefs, policies, and profile files are deployed from source, runtime
-state is verified against the repo, and drift stops Firefox. This document maps
+state is verified against the repo, and verify stops Firefox on drift. This document maps
 the deploy pipeline, verification, update detection, and webapp isolation. See
-[README.md](README.md) for usage.
+[README.md](../README.md) for usage.
 
 ## table of contents
 
@@ -84,9 +84,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 ## install
 
 ```
-  hifox install [--flatpak|--standard]
+  hifox install <--flatpak|--standard>
        │
-       ├── detect Firefox
+       ├── detect Firefox (refuses if the OTHER target is also installed)
        │   ┌─────────────┐     ┌────────────────────────┐
        │   │ Flatpak     │     │ Standard               │
        │   │ org.mozilla │     │ HIFOX_FIREFOX_DIR,     │
@@ -160,21 +160,25 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
        │   │  subshell ── isolated failure                       │
        │   │                                                     │
        │   │  policies ──> validate JSON ──> copy ──> lock       │
-       │   │  user.js ───> copy to ALL profiles ──> lock each    │
        │   │  autoconfig ─> generate ──> copy                    │
-       │   │  homepage ──> hifox.css + logo (default only)       │
-       │   │                                                     │
        │   │  webapp profiles                                    │
        │   │    ├── register in profiles.ini (next [ProfileN])   │
        │   │    ├── fix StartWithLastProfile -> 1                │
-       │   │    └── create dir ──> copy user.js + shared CSS     │
+       │   │    └── create dir ──> copy shared CSS               │
+       │   │  homepage ──> hifox.css + logo (default-named)      │
+       │   │  user.js ──> copy to ALL profiles last ──> lock each│
        │   └─────────────────────────────────────────────────────┘
        │
-       ├── webapp .desktop (once, globally)
+       ├── desktop launchers (single active target)
        │   ┌─────────────────────────────────────────────────────┐
-       │   │  .desktop ──> __LAUNCH_SH__ -> launcher path        │
-       │   │  icon ──────> cache-bust (cksum in filename)        │
-       │   │  orphans ───> prune removed webapps                 │
+       │   │  shadow ─> firefox.desktop                  (std)   │
+       │   │            org.mozilla.firefox.desktop      (fp)    │
+       │   │            (matches system entry name to            │
+       │   │             preserve the existing dock pin)         │
+       │   │  webapps   org.mozilla.firefox.<name>-web.desktop   │
+       │   │  Exec ───> launch.sh --target <t> [...]             │
+       │   │  icon ───> cache-bust (cksum in filename)           │
+       │   │  prune ──> remove unexpected entries                │
        │   └─────────────────────────────────────────────────────┘
        │
        ├── refresh watcher (if active ── picks up new dirs)
@@ -200,7 +204,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 ```
   flatpak Firefox runs sandboxed - configs on host /etc do not reach it.
   Mozilla declares an extension point: org.mozilla.firefox.systemconfig
-  mounted as /app/etc/firefox inside the sandbox. this command builds + installs it.
+  mounted as /app/etc/firefox inside the sandbox. hifox install --flatpak
+  auto-runs this step when Flatpak Builder is available; the command below is
+  the manual rerun.
 
   hifox install-systemconfig
        │
@@ -285,6 +291,8 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │                                                          │
   │  PathModified ── content edits (scripts, config)         │
   │  PathChanged ─── new files/dirs (webapp/)                │
+  │  PathChanged ─── profiles.ini (FF first-launch creates   │
+  │                  default profile -> auto-redeploy)       │
   │       │                                                  │
   │       └──> hifox deploy ──> Firefox updated              │
   └──────────────────────────────────────────────────────────┘
@@ -375,7 +383,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 ## status
 
 ```
-  repo is single source of truth. sha256 proves sync.
+  repo is single source of truth. byte-exact compare proves sync.
 
   hifox status
        │
@@ -383,10 +391,11 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 
            repo                          live
            ┌───────────────────┐         ┌───────────────────┐
-           │                   │  sha256 │                   │
+           │                   │  cmp -s │                   │
            │ user.js ──────────┼───vs───>│ managed profiles  │  ok/warn/fail
            │ policies.json ────┼───vs───>│ policies dir      │  ok/warn/fail
            │ autoconfig.cfg* ──┼───vs───>│ sysconfig dir     │  ok/warn/fail
+           │ chrome assets ────┼───vs───>│ profile chrome/   │  ok/warn/fail
            │                   │         │                   │
            └───────────────────┘         └───────────────────┘
            * regenerated on the fly (not a stored copy)
@@ -424,18 +433,19 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 ## update detection
 
 ```
-  every pref is dumped on every start. Firefox updates silently add or change
-  prefs - hifox diffs the full dump, catches meaningful changes, and notifies
-  before the new state is accepted.
+  every pref is dumped after user.js canary is loaded. Firefox updates silently
+  add or change prefs - hifox diffs the full dump, catches meaningful changes,
+  and notifies before the new state is accepted.
   (volatile prefs - timestamps, counters, settings cache - skipped for clean signal.)
   Firefox writes generated_pref_dump.txt inside each profile; verify copies it
   into config/generated_pref_dump.<target>.txt so standard and Flatpak baselines
-  never overwrite each other.
+  never overwrite each other. fresh-profile first launch is skipped (no canary
+  yet); next launch dumps cleanly.
 
   ┌─────────┐    ┌──────────────────┐     ┌──────────────────┐
   │ Firefox │    │  autoconfig.cfg  │     │     profile/     │
   │ update  │───>│  pref dump runs  │────>│ generated_pref_  │
-  │         │    │  on every start  │     │ dump.txt         │
+  │         │    │  after canary    │     │ dump.txt         │
   └─────────┘    └──────────────────┘     └────────┬─────────┘
                                                    │
                  ┌────────────────────────────────┐│
@@ -470,11 +480,24 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 ## webapp
 
 ```
-  .desktop ──> launch.sh ──> find Firefox ──> exec -P <name> <url>
-                   │                                    │
-                   ├── read saved target                ▼
-                   └── clean stale locks         separate dock icon
+  .desktop ──> launch.sh --target <t> ──> find Firefox ──> exec -P <name> <url>
+                   │                                              │
+                   ├── --target pins flatpak|standard              ▼
+                   └── clean stale locks                  separate dock icon
                        (0 Firefox? -> clean)
+
+  .desktop layout (single target only — install refuses if the other target exists):
+
+    Firefox shadow   firefox.desktop                      (standard target)
+                     org.mozilla.firefox.desktop          (flatpak target)
+                     ── filename matches the system entry it shadows so the
+                        existing dock pin keeps working
+                     Name=Firefox
+                     Exec=launch.sh --target <t> %u
+
+    webapps          org.mozilla.firefox.<name>-web.desktop
+                     Name=<DisplayName>
+                     Exec=launch.sh --target <t> --webapp <name> <url>
 
   dock icon match chain (so the OS shows <name>, not "Firefox"):
 
@@ -676,14 +699,18 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │    lockPref("_autoconfig.loaded", true)          <── chain proof │
   │    setBoolPref("_hifox.ui_seeded", true)         <── UI seed     │
   │    setBoolPref("_hifox.alpenglow_seeded", true)  <── theme seed  │
+  │    _hifox.error.ui_seed (pref)                   <── inner catch │
+  │    _hifox.error.seed_block (pref)                <── outer catch │
   │                                                                  │
   │  webapp/shared/webapp.cfg                                        │
   │    lockPref("_autoconfig.profile", <dir>)        <── active dir  │
   │    lockPref("_autoconfig.error", <msg>)          <── JS catch    │
   │                                                                  │
   │  generate_pref_dump.cfg                                          │
-  │    lockPref("_hifox.pref_dump", "<N> -> <path>") <── success     │
-  │    generated_pref_dump.err                        <── failure    │
+  │    generated_pref_dump.txt                       <── success     │
+  │    generated_pref_dump.err                       <── failure     │
+  │    _hifox.pref_dump (pref)                       <── summary     │
+  │    _hifox.error.dump_setup (pref)                <── observer    │
   │                                                                  │
   │  user.js (profile load)                                          │
   │    user_pref("_user_js.canary", "hifox")         <── file proof  │
@@ -701,8 +728,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │  _autoconfig.loaded     ── diagnostic only (not checked)         │
   │  _autoconfig.profile    ── diagnostic only (not checked)         │
   │  _autoconfig.error      ── diagnostic only (not checked)         │
-  │  _hifox.pref_dump       ── diagnostic only (not checked)         │
   │  _hifox.ui_seeded       ── diagnostic only (not checked)         │
   │  _hifox.alpenglow_seeded ── diagnostic only (not checked)        │
+  │  _hifox.pref_dump       ── diagnostic only (not checked)         │
+  │  _hifox.error.*         ── diagnostic only (visible in dump)     │
   └──────────────────────────────────────────────────────────────────┘
 ```

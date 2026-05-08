@@ -1,5 +1,5 @@
   <p align="center">
-    <img src="docs/hifox.png" alt="hifox" width="181" />
+    <img src="docs/hifox.png" alt="hifox" width="221" />
   </p>
 
 <h1 align="center"><code>hifox</code></h1>
@@ -22,16 +22,19 @@ bash hifox.sh install --standard
 
 # Flatpak Firefox
 bash hifox.sh install --flatpak
-bash hifox.sh install-systemconfig
 
-# auto-detect (standard, Flatpak, or both)
-bash hifox.sh install
-
+# hifox is single-target: install refuses if both Firefox targets are present.
 # install creates ~/.local/bin/hifox
-# restart Firefox once so prefs.js is populated
+# launch Firefox once, close it, then launch again
 hifox verify  # stops Firefox if drift is detected
 hifox status
 ```
+
+> **Snap Firefox is not supported** because `/snap/firefox` is read-only. Use Mozilla `.deb`, the `/opt/firefox` tarball, or `--flatpak`.
+
+> `HIFOX_LAUNCHER` applies only to terminal launches; menu icons pin the selected target directly.
+
+> Mozilla tarballs under `/opt/firefox` may need an AppArmor profile on Ubuntu 24.04+.
 
 ## what it does
 
@@ -44,15 +47,15 @@ hifox status
 ## commands
 
 ```text
-hifox install [--flatpak|--standard]    save target, deploy, install watchers
-hifox deploy                            sync repo config to Firefox
-hifox verify                            verify live state; stop Firefox on drift
-hifox status                            compare repo state with deployed state
-hifox clean                             remove stale profile remnants
-hifox purge [--flatpak|--standard]      delete profile data after confirmation
-hifox logs                              follow deploy and verify logs
-hifox watch install|remove|status       manage systemd file watchers
-hifox install-systemconfig              register Flatpak systemconfig extension
+hifox install <--flatpak|--standard>          save target, deploy, install watchers
+hifox deploy                                  sync repo config to Firefox
+hifox verify                                  verify live state; stop Firefox on drift
+hifox status                                  compare repo state with deployed state
+hifox clean                                   remove stale profile remnants
+hifox purge [--flatpak|--standard]            delete profile data after confirmation
+hifox logs                                    follow deploy and verify logs
+hifox watch install|remove|status             manage systemd file watchers
+hifox install-systemconfig                    register Flatpak systemconfig extension
 ```
 
 Before install creates the `hifox` command, use `bash hifox.sh <command>`.
@@ -60,19 +63,20 @@ Before install creates the `hifox` command, use `bash hifox.sh <command>`.
 ## files
 
 ```text
-config/global_lockprefs.cfg        global Firefox lockPrefs
-config/policies.json               Firefox policy controls
-config/user.js                     per-profile canary marker
-config/autoconfig.js               bootstrap loader for autoconfig.cfg
-config/generate_pref_dump.cfg      Firefox pref dump generator
-config/generated_pref_dump.<target>.txt    per-target reviewed Firefox runtime dump
-config/hifox.css                   default profile homepage CSS
-webapp/shared/webapp.cfg           shared webapp runtime behavior
-webapp/shared/webapp.css           webapp chrome CSS
-webapp/<name>/prefs.cfg            per-webapp permission overrides
+config/global_lockprefs.cfg                   global Firefox lockPrefs
+config/policies.json                          Firefox policy controls
+config/user.js                                per-profile canary marker
+config/autoconfig.js                          bootstrap loader for autoconfig.cfg
+config/generate_pref_dump.cfg                 Firefox pref dump generator
+config/generated_pref_dump.<target>.txt       per-target reviewed Firefox runtime dump
+config/hifox.css                              default profile homepage CSS
+webapp/shared/webapp.cfg                      shared webapp runtime behavior
+webapp/shared/webapp.css                      webapp chrome CSS
+webapp/<name>/prefs.cfg                       per-webapp permission overrides
 ```
 
 ## reference
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) - full system map.
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - full system map.
+- [Screenshot](docs/screenshot.png)
 - [MIT License](LICENSE)
