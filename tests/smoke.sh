@@ -90,6 +90,7 @@ _make_verify_fixture() {
   printf '%s\n' "${dump}" > "${profile}/generated_pref_dump.txt"
   _gen_autoconfig_for "${repo}" > "${sdir}/autoconfig.cfg"
   printf 'user_pref("_user_js.canary", "hifox");\n' > "${profile}/prefs.js"
+  # prefs.js is newer to simulate restart-after-deploy for verify._older_than_any().
   touch -t 200001010000 \
     "${poldir}/policies.json" \
     "${sdir}/defaults/pref/autoconfig.js" \

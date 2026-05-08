@@ -1,5 +1,5 @@
   <p align="center">
-    <img src="hifox.png" alt="hifox" width="181" />
+    <img src="docs/hifox.png" alt="hifox" width="181" />
   </p>
 
 <h1 align="center"><code>hifox</code></h1>
