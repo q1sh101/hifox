@@ -570,6 +570,10 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   ├──────────┼──────────────────────────────────────────────┤
   │ discord  │  autoplay, mic, camera                       │
   ├──────────┼──────────────────────────────────────────────┤
+  │ netflix  │  DRM (Widevine)                              │
+  ├──────────┼──────────────────────────────────────────────┤
+  │ prime    │  DRM (Widevine)                              │
+  ├──────────┼──────────────────────────────────────────────┤
   │ spotify  │  DRM (Widevine)                              │
   ├──────────┼──────────────────────────────────────────────┤
   │ example  │  webapp/example/prefs.cfg -> unlock what you │
@@ -618,6 +622,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │              URL text invisible, permissions visible │
   │                                                      │
   │  context menu ──> browser-only actions hidden        │
+  │                                                      │
+  │  override: webapp/<name>/userChrome.css appended     │
+  │            (cascade re-shows e.g. back/forward)      │
   └──────────────────────────────────────────────────────┘
 ```
 

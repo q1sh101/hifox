@@ -1,0 +1,5 @@
+#back-button,
+#forward-button {
+  display: flex !important;
+  visibility: visible !important;
+}

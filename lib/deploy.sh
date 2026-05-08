@@ -252,6 +252,10 @@ _deploy_webapp_profiles() {
     if [[ -d "${wprofile}" ]]; then
       if mkdir -p "${wprofile}/chrome" \
         && cp "${css_src}" "${wprofile}/chrome/userChrome.css"; then
+        if [[ -f "${wdir}/userChrome.css" ]]; then
+          printf '\n' >> "${wprofile}/chrome/userChrome.css"
+          cat "${wdir}/userChrome.css" >> "${wprofile}/chrome/userChrome.css"
+        fi
         ok "${wname}: profile ready"
       else
         warn "${wname}: file copy failed"

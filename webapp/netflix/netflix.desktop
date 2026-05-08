@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Netflix
+Comment=Netflix (hifox Firefox webapp, isolated profile)
+Exec=__LAUNCH_SH__ --webapp netflix https://www.netflix.com/ %u
+Icon=netflix
+Type=Application
+Categories=AudioVideo;Video;Network;
+StartupWMClass=netflix-web
+MimeType=x-scheme-handler/netflix;

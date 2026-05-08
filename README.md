@@ -36,6 +36,8 @@ hifox status
 
 > Mozilla tarballs under `/opt/firefox` may need an AppArmor profile on Ubuntu 24.04+.
 
+> **Protected media:** Flatpak Firefox is the tested target for DRM/audio/video webapps. Standard Linux Firefox builds vary by distro sandboxing and codec/CDM integration, so Prime Video, Netflix, or Spotify may fail playback even when hifox is deployed correctly.
+
 ## what it does
 
 - Locks Firefox prefs with `lockPref()` so extensions, websites, and runtime code cannot override them.

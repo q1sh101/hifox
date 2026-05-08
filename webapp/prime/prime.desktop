@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Prime
+Comment=Prime (hifox Firefox webapp, isolated profile)
+Exec=__LAUNCH_SH__ --webapp prime https://www.primevideo.com/ %u
+Icon=prime
+Type=Application
+Categories=AudioVideo;Video;Network;
+StartupWMClass=prime-web
+MimeType=x-scheme-handler/prime;
