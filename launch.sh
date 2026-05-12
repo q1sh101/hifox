@@ -35,9 +35,10 @@ _find_firefox() {
 _ff=$(_find_firefox) || { echo "error: no Firefox found" >&2; exit 1; }
 
 _run() {
-  # shellcheck disable=SC2086  # word-split intentional
   if [[ -z "${_pinned_target}" && -n "${HIFOX_LAUNCHER:-}" ]]; then
-    exec ${HIFOX_LAUNCHER} "$@"
+    local -a _launcher_argv=()
+    read -ra _launcher_argv <<<"${HIFOX_LAUNCHER}"
+    exec "${_launcher_argv[@]}" "$@"
   fi
   if [[ "${_ff}" == "flatpak" ]]; then
     exec flatpak run org.mozilla.firefox "$@"

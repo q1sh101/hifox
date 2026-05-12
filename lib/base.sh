@@ -64,7 +64,11 @@ _save_target() {
   f="$(_target_file)"
   mkdir -p "$(dirname "${f}")"
   tmp="${f}.tmp.$$"
-  printf '%s\n' "$1" > "${tmp}" && mv -f "${tmp}" "${f}" || { rm -f "${tmp}"; return 1; }
+  if printf '%s\n' "$1" > "${tmp}" && mv -f "${tmp}" "${f}"; then
+    return 0
+  fi
+  rm -f "${tmp}"
+  return 1
 }
 
 _read_target() {
@@ -227,6 +231,10 @@ _can_sudo_chattr() {
     [[ "${_out}" == *"Usage"* ]] && _chattr_ok=true
   fi
   ${_chattr_ok}
+}
+
+_is_immutable() {
+  lsattr "$1" 2>/dev/null | awk '{print $1}' | grep -q i
 }
 
 _chattr_unlock() {

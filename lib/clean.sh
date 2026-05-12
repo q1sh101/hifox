@@ -38,8 +38,6 @@ hifox_clean() {
         AlternateServices.bin \
         crashes \
         minidumps \
-        cache2 \
-        startupCache \
         storage-sync.sqlite \
         storage-sync.sqlite-wal \
         storage-sync.sqlite-shm \
@@ -47,6 +45,9 @@ hifox_clean() {
         permissions.sqlite \
         notification-store.json
       do
+        if [[ "${target}" == gmp-* && -d "${_dir}/webapp/${name}" ]]; then
+          continue
+        fi
         if [[ -e "${profile}/${target}" ]]; then
           rm -rf "${profile:?}/${target:?}"
           ok "removed ${name}/${target}"

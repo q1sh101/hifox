@@ -7,11 +7,6 @@ _policy_count() {
     "$1" 2>/dev/null || echo "?"
 }
 
-_is_immutable() {
-  _can_sudo_chattr || return 1
-  sudo -n lsattr "$1" 2>/dev/null | awk '{print $1}' | grep -q i
-}
-
 _deploy_policies() {
   local policies_dir="$1" install_dir="${2:-}"
   local src="${_dir}/config/policies.json"
@@ -42,8 +37,11 @@ _deploy_policies() {
     if _is_immutable "${dst}"; then
       tag=", immutable"
     elif ${can_chattr}; then
-      sudo -n chattr +i "${dst}" 2>/dev/null && tag=", immutable" \
-        || warn "policies.json: re-lock failed - file remains writable"
+      if sudo -n chattr +i "${dst}" 2>/dev/null; then
+        tag=", immutable"
+      else
+        warn "policies.json: re-lock failed - file remains writable"
+      fi
     fi
     ok "policies.json ($(_policy_count "${src}") policies${tag}, unchanged)"
     return 0
@@ -59,8 +57,11 @@ _deploy_policies() {
   fi
   local tag=""
   if ${can_chattr}; then
-    sudo -n chattr +i "${dst}" 2>/dev/null && tag=", immutable" \
-      || warn "policies.json: re-lock failed - file remains writable"
+    if sudo -n chattr +i "${dst}" 2>/dev/null; then
+      tag=", immutable"
+    else
+      warn "policies.json: re-lock failed - file remains writable"
+    fi
   fi
   ok "policies.json ($(_policy_count "${src}") policies${tag})"
 }
@@ -71,7 +72,8 @@ _deploy_userjs() {
   [[ -f "${src}" ]] || die "user.js not found in ${_dir}/config"
 
   local count deployed=0
-  count=$(grep -c 'user_pref' "${src}" 2>/dev/null || echo "?")
+  count=$(grep -c 'user_pref' "${src}" 2>/dev/null || true)
+  count=${count:-0}
 
   local can_chattr=false
   _can_sudo_chattr && can_chattr=true
@@ -130,7 +132,7 @@ _deploy_homepage() {
   fi
   [[ -d "${profiles_dir}" ]] || return 0
 
-  local count=0 candidates=0 p name
+  local count=0 candidates=0 p name css_dst logo_dst
   for p in "${profiles_dir}"/*; do
     [[ -d "${p}" ]] || continue
     name=$(basename "${p}")
@@ -140,8 +142,10 @@ _deploy_homepage() {
     esac
     ((candidates++)) || true
     mkdir -p "${p}/chrome"
-    cp "${css_src}" "${p}/chrome/userContent.css" 2>/dev/null && \
-    cp "${logo_src}" "${p}/chrome/hifox.png" 2>/dev/null && \
+    css_dst="${p}/chrome/userContent.css"
+    logo_dst="${p}/chrome/hifox.png"
+    { _file_matches "${css_src}" "${css_dst}" || cp "${css_src}" "${css_dst}" 2>/dev/null; } && \
+    { _file_matches "${logo_src}" "${logo_dst}" || cp "${logo_src}" "${logo_dst}" 2>/dev/null; } && \
     ((count++)) || true
   done
   if (( count > 0 )); then

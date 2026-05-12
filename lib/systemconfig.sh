@@ -19,14 +19,18 @@ hifox_install_systemconfig() {
   fi
 
   local ff_runtime ff_branch sdk_ver
-  ff_runtime=$(flatpak info org.mozilla.firefox 2>/dev/null \
+  ff_runtime=$(LC_ALL=C flatpak info org.mozilla.firefox 2>/dev/null \
     | awk -F': *' '/^[[:space:]]*Runtime:/ {print $2}')
-  ff_branch=$(flatpak info org.mozilla.firefox 2>/dev/null \
+  ff_branch=$(LC_ALL=C flatpak info org.mozilla.firefox 2>/dev/null \
     | awk -F': *' '/^[[:space:]]*Branch:/ {print $2}')
   sdk_ver="${ff_runtime##*/}"
   [[ -n "${sdk_ver}" && -n "${ff_branch}" ]] || die "could not parse Firefox flatpak metadata"
 
   [[ -f "${_dir}/config/policies.json" ]] || die "policies.json not found"
+  if _check_command python3; then
+    python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${_dir}/config/policies.json" 2>/dev/null \
+      || die "policies.json: invalid JSON"
+  fi
   [[ -f "${_dir}/config/autoconfig.js" ]] || die "autoconfig.js not found"
   [[ -f "${_dir}/config/global_lockprefs.cfg" ]] || die "global_lockprefs.cfg not found"
   [[ -f "${_dir}/config/generate_pref_dump.cfg" ]] || die "generate_pref_dump.cfg not found"

@@ -48,7 +48,13 @@ hifox_status() {
           local webapp_css="${profile}/chrome/userChrome.css"
           if [[ ! -f "${webapp_css}" ]]; then
             warn "${name}  MISSING userChrome.css"
-          elif _file_matches "${_dir}/webapp/shared/webapp.css" "${webapp_css}"; then
+          elif cmp -s <(
+            cat "${_dir}/webapp/shared/webapp.css"
+            if [[ -f "${_dir}/webapp/${name}/userChrome.css" ]]; then
+              printf '\n'
+              cat "${_dir}/webapp/${name}/userChrome.css"
+            fi
+          ) "${webapp_css}"; then
             ok "${name}  synced"
           else
             warn "${name}  DRIFT userChrome.css"
@@ -93,6 +99,27 @@ hifox_status() {
       ok "synced"
     else
       warn "DRIFT"
+    fi
+
+    log "immutability"
+    local locked=0 total=0
+    if [[ -f "${poldir}/policies.json" ]]; then
+      ((total++)) || true
+      _is_immutable "${poldir}/policies.json" && ((locked++)) || true
+    fi
+    while IFS= read -r profile; do
+      [[ -f "${profile}/user.js" ]] || continue
+      ((total++)) || true
+      _is_immutable "${profile}/user.js" && ((locked++)) || true
+    done < <(_list_profile_paths "${pdir}")
+    if (( total == 0 )); then
+      warn "no files to check"
+    elif (( locked == total )); then
+      ok "chattr +i (${locked}/${total} files)"
+    elif (( locked == 0 )); then
+      warn "posix-only (chattr unavailable)"
+    else
+      warn "partial (${locked}/${total} files locked)"
     fi
   done < <(_active_installations)
 }

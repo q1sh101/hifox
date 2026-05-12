@@ -46,6 +46,14 @@
 
     "VisualSearchEnabled": false,
 
+    "IPProtectionAvailable": false,
+    "AIControls": {
+      "Default": {
+        "Value": "blocked",
+        "Locked": true
+      }
+    },
+
     "SSLVersionMin": "tls1.2",
 
     "PostQuantumKeyAgreementEnabled": true,
