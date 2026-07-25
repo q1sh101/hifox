@@ -77,8 +77,15 @@ _gen_autoconfig_for() {
   bash -c 'source "$1/lib/base.sh"; _dir="$2"; _generate_autoconfig' _ "${_dir}" "$1"
 }
 
+_fake_runtime_dump() {
+  sed -n 's/^lockPref("\([^"]*\)", *\(.*\));.*/\1 = \2 [LOCKED]/p' \
+    "${_dir}/config/global_lockprefs.cfg" \
+    | sed 's/ = "\(.*\)" \[LOCKED\]$/ = \1 [LOCKED]/'
+  printf '_user_js.canary = hifox\n'
+}
+
 _make_verify_fixture() {
-  local root="$1" repo="$2" dump="${3:-fixture.pref = true}"
+  local root="$1" repo="$2" dump="${3:-}"
   local profile="${root}/profile"
   local poldir="${root}/policies"
   local sdir="${root}/sys"
@@ -87,7 +94,11 @@ _make_verify_fixture() {
   cp "${repo}/config/policies.json" "${poldir}/policies.json"
   cp "${repo}/config/autoconfig.js" "${sdir}/defaults/pref/autoconfig.js"
   cp "${repo}/config/user.js" "${profile}/user.js"
-  printf '%s\n' "${dump}" > "${profile}/generated_pref_dump.txt"
+  if [[ -n "${dump}" ]]; then
+    printf '%s\n' "${dump}" > "${profile}/generated_pref_dump.txt"
+  else
+    _fake_runtime_dump > "${profile}/generated_pref_dump.txt"
+  fi
   _gen_autoconfig_for "${repo}" > "${sdir}/autoconfig.cfg"
   printf 'user_pref("_user_js.canary", "hifox");\n' > "${profile}/prefs.js"
   # prefs.js is newer to simulate restart-after-deploy for verify._older_than_any().
@@ -135,10 +146,10 @@ _verify_rejects_pref_drift() {
   _make_verify_repo "${repo}"
   IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
   cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
-  cat >> "${profile}/prefs.js" << 'EOF'
-user_pref("privacy.fingerprintingProtection", false);
-user_pref("privacy.resistFingerprinting", true);
-EOF
+  sed -i \
+    -e 's/^privacy\.fingerprintingProtection = true \[LOCKED\]$/privacy.fingerprintingProtection = false [LOCKED]/' \
+    -e 's/^privacy\.resistFingerprinting = false \[LOCKED\]$/privacy.resistFingerprinting = true [LOCKED]/' \
+    "${profile}/generated_pref_dump.txt"
   touch -t 200001020001 "${profile}/prefs.js"
 
   (
@@ -163,6 +174,76 @@ EOF
     cat "${root}/verify.out"
     return 1
   fi
+}
+
+_verify_rejects_unlocked_pref() {
+  local root="$1"
+  local repo="${root}/repo"
+  local profile poldir sdir
+  _make_verify_repo "${repo}"
+  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
+  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
+  sed -i 's/^dom\.security\.https_only_mode = true \[LOCKED\]$/dom.security.https_only_mode = true/' \
+    "${profile}/generated_pref_dump.txt"
+
+  (
+    verify_repo="${repo}"
+    verify_root="${root}/flatpak"
+    verify_profile="${profile}"
+    verify_poldir="${poldir}"
+    verify_sdir="${sdir}"
+    source "${_dir}/lib/base.sh"
+    source "${_dir}/lib/deploy.sh"
+    source "${_dir}/lib/verify.sh"
+    _dir="${verify_repo}"
+    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
+    _find_profile() { printf '%s\n' "${verify_profile}"; }
+    _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
+    _kill_firefox() { :; }
+    notify-send() { :; }
+    _hifox_verify
+  ) > "${root}/verify.out" 2>&1
+  local rc=$?
+  if (( rc == 0 )); then
+    cat "${root}/verify.out"
+    return 1
+  fi
+  grep -q 'UNLOCKED' "${root}/verify.out"
+}
+
+_verify_flags_missing_webapp_dump() {
+  local root="$1"
+  local repo="${root}/repo"
+  local profile poldir sdir
+  _make_verify_repo "${repo}"
+  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
+  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
+  mkdir -p "${root}/flatpak/discord"
+  printf 'user_pref("x", 1);\n' > "${root}/flatpak/discord/prefs.js"
+
+  (
+    verify_repo="${repo}"
+    verify_root="${root}/flatpak"
+    verify_profile="${profile}"
+    verify_poldir="${poldir}"
+    verify_sdir="${sdir}"
+    source "${_dir}/lib/base.sh"
+    source "${_dir}/lib/deploy.sh"
+    source "${_dir}/lib/verify.sh"
+    _dir="${verify_repo}"
+    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
+    _find_profile() { printf '%s\n' "${verify_profile}"; }
+    _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
+    _kill_firefox() { :; }
+    notify-send() { :; }
+    _hifox_verify
+  ) > "${root}/verify.out" 2>&1
+  local rc=$?
+  if (( rc == 0 )); then
+    cat "${root}/verify.out"
+    return 1
+  fi
+  grep -q 'discord: pref dump' "${root}/verify.out"
 }
 
 _verify_writes_per_target_dumps() {
@@ -586,6 +667,8 @@ _test "install case calls hifox_install_systemconfig" \
 
 _test "verify accepts deployed fixture"  _verify_fixture "${_tmpdir}/verify-pass"
 _test "verify rejects pref drift"        _verify_rejects_pref_drift "${_tmpdir}/verify-fail"
+_test "verify rejects unlocked pref"     _verify_rejects_unlocked_pref "${_tmpdir}/verify-unlocked"
+_test "verify flags webapp missing dump" _verify_flags_missing_webapp_dump "${_tmpdir}/verify-wdump"
 _test "verify writes per-target pref dumps" _verify_writes_per_target_dumps "${_tmpdir}/verify-dumps"
 
 _test "log brackets aligned" bash -c "

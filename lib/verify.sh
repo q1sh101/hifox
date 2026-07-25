@@ -47,6 +47,7 @@ _hifox_verify() {
     local ac="${sdir}/autoconfig.cfg"
     local ac_js="${sdir}/defaults/pref/autoconfig.js"
     local main_user_js="${profile}/user.js"
+    local dump_src="${profile}/generated_pref_dump.txt"
 
     _check_file "${_dir}/config/policies.json" "${poldir}/policies.json" "policies.json"
     _check_file "${_dir}/config/autoconfig.js" "${ac_js}" "autoconfig.js"
@@ -63,11 +64,14 @@ _hifox_verify() {
       _check_file "${uj_src}" "${_prof_path}/user.js" "user.js ($(basename "${_prof_path}"))"
     done < <(_all_profile_paths "${pdir}")
 
-    # If deployed files are newer than prefs.js, Firefox has not restarted into this config yet.
-    if (( ${#failures[@]} == 0 )) \
-      && _older_than_any "${prefs}" "${main_user_js}" "${ac_js}" "${ac}" "${poldir}/policies.json"; then
-      ok "${type}: deploy staged - restart Firefox to apply"
-      continue
+    # If deployed files are newer than prefs.js or the dump, Firefox has not restarted into this config yet.
+    if (( ${#failures[@]} == 0 )); then
+      if _older_than_any "${prefs}" "${main_user_js}" "${ac_js}" "${ac}" "${poldir}/policies.json" \
+        || { [[ -s "${dump_src}" ]] \
+             && _older_than_any "${dump_src}" "${main_user_js}" "${ac_js}" "${ac}" "${poldir}/policies.json"; }; then
+        ok "${type}: deploy staged - restart Firefox to apply"
+        continue
+      fi
     fi
 
     local checks=(
@@ -97,28 +101,30 @@ _hifox_verify() {
       'security.enterprise_roots.enabled|false|system CA import blocked'
     )
 
-    local check key key_re expected desc actual
-    for check in "${checks[@]}"; do
-      IFS='|' read -r key expected desc <<< "${check}"
-      # escape dots in pref key: pref names contain '.' which is a regex meta-char
-      key_re="${key//./\\.}"
-      # check prefs.js (user_pref) first, then autoconfig.cfg base lockPrefs (not indented = not webapp overrides)
-      actual=$(sed -n "s/^user_pref(\"${key_re}\", *\([^)]*\));.*/\1/p" "${prefs}" 2>/dev/null | tail -1 || true)
-      if [[ -z "${actual}" ]] && [[ -f "${ac}" ]]; then
-        actual=$(sed -n "s/^lockPref(\"${key_re}\", *\([^)]*\));.*/\1/p" "${ac}" 2>/dev/null | tail -1 || true)
-      fi
-      if [[ -z "${actual}" ]]; then
-        failures+=("MISSING: ${desc}")
-      elif [[ "${actual}" != "${expected}" ]]; then
-        failures+=("WRONG: ${desc} (got: ${actual})")
-      fi
-    done
-
-    local dump_src="${profile}/generated_pref_dump.txt"
-    local dump_dst="${_dir}/config/generated_pref_dump.${type}.txt"
+    local check key key_re expected desc actual actual_raw
     if [[ ! -s "${dump_src}" ]]; then
       failures+=("MISSING: pref dump (Firefox didn't generate it)")
     else
+      for check in "${checks[@]}"; do
+        IFS='|' read -r key expected desc <<< "${check}"
+        # escape dots in pref key: pref names contain '.' which is a regex meta-char
+        key_re="${key//./\\.}"
+        actual_raw=$(sed -n "s/^${key_re} = //p" "${dump_src}" 2>/dev/null | head -1 || true)
+        actual="${actual_raw% \[LOCKED\]}"
+        expected="${expected%\"}"
+        expected="${expected#\"}"
+        if [[ -z "${actual}" ]]; then
+          failures+=("MISSING: ${desc}")
+        elif [[ "${actual}" != "${expected}" ]]; then
+          failures+=("WRONG: ${desc} (got: ${actual})")
+        elif [[ "${key}" != _user_js.* && "${actual_raw}" == "${actual}" ]]; then
+          failures+=("UNLOCKED: ${desc}")
+        fi
+      done
+    fi
+
+    local dump_dst="${_dir}/config/generated_pref_dump.${type}.txt"
+    if [[ -s "${dump_src}" ]]; then
       if [[ ! -f "${dump_dst}" ]] || ! diff -q "${dump_src}" "${dump_dst}" &>/dev/null; then
         if cp "${dump_src}" "${dump_dst}" 2>/dev/null; then
           ok "${type}: pref dump updated in repo"
@@ -127,6 +133,33 @@ _hifox_verify() {
         fi
       fi
     fi
+
+    local wdir wname wdump wkey wexp wval wval_raw
+    for wdir in "${_dir}/webapp"/*/; do
+      [[ -d "${wdir}" ]] || continue
+      wname=$(basename "${wdir}")
+      [[ "${wname}" == "shared" ]] && continue
+      [[ -f "${wdir}/prefs.cfg" ]] || continue
+      wdump="${pdir}/${wname}/generated_pref_dump.txt"
+      if [[ ! -s "${wdump}" ]]; then
+        [[ -s "${pdir}/${wname}/prefs.js" ]] && failures+=("MISSING: ${wname}: pref dump")
+        continue
+      fi
+      while IFS='|' read -r wkey wexp; do
+        [[ -n "${wkey}" ]] || continue
+        wval_raw=$(sed -n "s/^${wkey//./\\.} = //p" "${wdump}" 2>/dev/null | head -1 || true)
+        wval="${wval_raw% \[LOCKED\]}"
+        wexp="${wexp%\"}"
+        wexp="${wexp#\"}"
+        if [[ -z "${wval}" ]]; then
+          failures+=("MISSING: ${wname}: ${wkey}")
+        elif [[ "${wval}" != "${wexp}" ]]; then
+          failures+=("WRONG: ${wname}: ${wkey} (got: ${wval})")
+        elif [[ "${wval_raw}" == "${wval}" ]]; then
+          failures+=("UNLOCKED: ${wname}: ${wkey}")
+        fi
+      done < <(sed -n 's/^lockPref("\([^"]*\)", *\(.*\));.*/\1|\2/p' "${wdir}/prefs.cfg")
+    done
 
     local dump_err_file="${profile}/generated_pref_dump.err"
     if [[ -f "${dump_err_file}" && -s "${dump_err_file}" ]]; then

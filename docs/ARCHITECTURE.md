@@ -342,17 +342,18 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
        │
        ▼
   ┌──────────────────────────────────────────────┐
-  │  pref integrity (default profile only)       │
+  │  pref integrity (runtime dump)               │
   │                                              │
-  │  dual-source per check:                      │
-  │  prefs.js (user_pref)                        │
-  │       │                                      │
-  │       └── miss? ──> autoconfig.cfg (lockPref)│
-  │                     (base lockPrefs only,    │
-  │                      not webapp overrides)   │
+  │  single source per check:                    │
+  │  generated_pref_dump.txt - what Firefox      │
+  │  actually loaded this session                │
+  │  (stale dump ──> "staged, restart to apply") │
   │                                              │
   │  canary, cookieBehavior, HTTPS-only,         │
   │  DRM, shutdown sanitization                  │
+  │                                              │
+  │  webapp profiles: each app's prefs.cfg       │
+  │  compared against that profile's own dump    │
   └───────────────────┬──────────────────────────┘
                       ▼
   ┌──────────────────────────────────────────────┐
@@ -376,7 +377,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
                ┌──────┴──────┐
             pass          fail ──> stop Firefox + notify + exit
 
-  pref checks: default only.  user.js diff: ALL profiles.
+  pref checks: default dump + webapp dumps.  user.js diff: ALL profiles.
   fail -> stop Firefox -> notify -> exit (run: hifox deploy).
 ```
 
