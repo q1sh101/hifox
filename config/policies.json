@@ -30,6 +30,14 @@
     "DisableMasterPasswordCreation": true,
     "DisablePasswordReveal": true,
     "DisableSafeMode": true,
+    "DisableAccounts": true,
+    "DisableRemoteImprovements": true,
+
+    "UserMessaging": {
+      "UrlbarInterventions": false,
+      "FirefoxLabs": false,
+      "Locked": true
+    },
 
     "BrowserDataBackup": false,
 
