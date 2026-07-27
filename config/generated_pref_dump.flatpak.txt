@@ -1,6 +1,6 @@
 _autoconfig.loaded = true [LOCKED]
 _hifox.alpenglow_seeded = true
-_hifox.pref_dump = 5637 prefs
+_hifox.pref_dump = 5636 prefs
 _hifox.ui_seeded = true
 _user_js.canary = hifox
 about.glean.redesign.enabled = false

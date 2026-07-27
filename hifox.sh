@@ -15,6 +15,7 @@ cmd="${1:-}"
 
 case "${cmd}" in
   install)
+    [[ $# -le 2 ]] || die "usage: hifox install <--flatpak|--standard>"
     flag="${2:-}"
     target=""
     other=""
@@ -66,24 +67,30 @@ case "${cmd}" in
     hifox_deploy
     ;;
   verify)
+    [[ $# -le 1 ]] || die "verify takes no arguments"
     _require_firefox
     source "${_dir}/lib/verify.sh"
     _hifox_verify
     ;;
   clean)
+    [[ $# -le 1 ]] || die "clean takes no arguments"
     hifox_clean
     ;;
   purge)
+    [[ $# -le 2 ]] || die "usage: hifox purge [--flatpak|--standard]"
     hifox_purge "${2:-}"
     ;;
   status)
+    [[ $# -le 1 ]] || die "status takes no arguments"
     hifox_status
     ;;
   logs)
+    [[ $# -le 1 ]] || die "logs takes no arguments"
     _require_command journalctl
     exec journalctl --user -n 50 -f -o cat -u hifox-watch.path -u hifox-deploy.service -u hifox-verify.service
     ;;
   watch)
+    [[ $# -le 2 ]] || die "usage: hifox watch <install|remove|status>"
     sub="${2:-}"
     case "${sub}" in
       install) hifox_watch_install ;;

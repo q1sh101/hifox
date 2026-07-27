@@ -103,8 +103,8 @@ hifox_purge() {
         [[ -d "${d}" ]] || continue
         base="$(basename "${d}")"
         case "${base}" in
-          .|..|config) continue ;;
-          *)           rm -rf "${d:?}" 2>/dev/null && ok "cleared: ${base}" ;;
+          .|..|config|.mozilla) continue ;;
+          *)                    rm -rf "${d:?}" 2>/dev/null && ok "cleared: ${base}" ;;
         esac
       done
     else

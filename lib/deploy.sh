@@ -205,6 +205,8 @@ _register_profile() {
   [[ -f "${ini}" ]] || return 0
 
   if grep -q "^Name=${wname}$" "${ini}" 2>/dev/null; then
+    grep -q "^Path=${wname}$" "${ini}" 2>/dev/null \
+      || warn "profiles.ini: ${wname} registered with a different Path - leaving as is"
     return 0
   fi
 
@@ -343,6 +345,7 @@ _deploy_desktop_entries() {
     "${desktop_dir}"/org.mozilla.firefox.desktop \
     "${desktop_dir}"/firefox.desktop; do
     [[ -f "${entry}" ]] || continue
+    grep -qi 'hifox' "${entry}" 2>/dev/null || continue
     keep=false
     for exp in "${expected[@]}"; do
       [[ "$(basename "${entry}")" == "${exp}" ]] && keep=true && break

@@ -147,7 +147,7 @@ _find_profile() {
       /^\[/ { inst=0 }
       inst && /^Default=/ { print $2; exit }
     ' "${ini}" 2>/dev/null) || true
-    if [[ -n "${install_default}" ]]; then
+    if [[ -n "${install_default}" && "${install_default}" != *..* ]]; then
       local resolved="${profiles_dir}/${install_default}"
       [[ -d "${resolved}" ]] && echo "${resolved}" && return 0
     fi
@@ -166,7 +166,7 @@ _find_profile() {
       in_p && /^Default=1/ { d=1 }
       END { if(p && d) print p, r }
     ' "${ini}" 2>/dev/null) || true
-    if [[ -n "${default_path}" ]]; then
+    if [[ -n "${default_path}" && "${default_path}" != *..* ]]; then
       local resolved
       if [[ "${is_rel}" == "0" ]]; then
         resolved="${default_path}"

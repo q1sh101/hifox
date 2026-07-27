@@ -35,6 +35,9 @@ _find_firefox() {
 _ff=$(_find_firefox) || { echo "error: no Firefox found" >&2; exit 1; }
 
 _run() {
+  # the main profile gets the same hook point as the webapps
+  _hook="${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/hooks/main"
+  [[ -x "${_hook}" ]] && exec "${_hook}" "$@"
   if [[ -z "${_pinned_target}" && -n "${HIFOX_LAUNCHER:-}" ]]; then
     local -a _launcher_argv=()
     read -ra _launcher_argv <<<"${HIFOX_LAUNCHER}"
@@ -91,9 +94,10 @@ if [[ "${1:-}" == "--webapp" ]]; then
   case "${_name}" in ''|.*|*[!A-Za-z0-9._-]*) echo "error: invalid webapp name: ${_name}" >&2; exit 1 ;; esac
 
   _hook="${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/hooks/webapp/${_name}"
-  [[ -x "${_hook}" ]] && exec "${_hook}" "${@:3}"
+  [[ -x "${_hook}" ]] && exec "${_hook}" "${@:4}"
 
   _url="${3:-}"
+  [[ "${4:-}" == http://* || "${4:-}" == https://* ]] && _url="${4}"
   _args=(--no-remote --new-instance -P "${_name}")
   [[ -n "${_url}" ]] && _args+=("${_url}")
   export MOZ_APP_REMOTINGNAME="${_name}-web"

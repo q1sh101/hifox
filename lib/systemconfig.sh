@@ -39,6 +39,7 @@ hifox_install_systemconfig() {
   log "building org.mozilla.firefox.systemconfig (sdk ${sdk_ver}, branch ${ff_branch})..."
 
   local stage
+  mkdir -p "${XDG_CACHE_HOME:-${HOME}/.cache}"
   stage=$(mktemp -d "${XDG_CACHE_HOME:-${HOME}/.cache}/hifox-build.XXXXXX")
   trap 'rm -rf "${stage:?}"' EXIT
 
