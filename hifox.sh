@@ -13,6 +13,17 @@ source "${_dir}/lib/systemconfig.sh"
 
 cmd="${1:-}"
 
+_acquire_operation_lock() {
+  local lock_dir
+  lock_dir="$(dirname "$(_target_file)")"
+  mkdir -p -- "${lock_dir}" || die "cannot create hifox state directory"
+  [[ -d "${lock_dir}" ]] || die "hifox state path is not a directory"
+  _require_command flock
+  # lock the existing directory: a new lock file could be a planted symlink
+  exec 9<"${lock_dir}" || die "cannot open hifox state directory for locking"
+  flock -w 15 9 || die "another hifox operation is still running"
+}
+
 case "${cmd}" in
   install)
     [[ $# -le 2 ]] || die "usage: hifox install <--flatpak|--standard>"
@@ -24,6 +35,7 @@ case "${cmd}" in
       --standard) target="standard"; other="flatpak" ;;
       *)          die "usage: hifox install <--flatpak|--standard>" ;;
     esac
+    _acquire_operation_lock
     if [[ "${target}" == "standard" && -f /snap/firefox/current/usr/lib/firefox/application.ini ]]; then
       warn "alternatives:"
       warn "  - Mozilla apt repo (.deb)"
@@ -44,15 +56,6 @@ case "${cmd}" in
       log "sudo required for /etc/firefox and Firefox install directory"
       sudo -v || die "sudo authentication failed"
     fi
-    if [[ "${target}" == "flatpak" ]]; then
-      if _check_command flatpak-builder || flatpak info org.flatpak.Builder &>/dev/null; then
-        hifox_install_systemconfig
-      else
-        warn "Flatpak Builder not found - systemconfig extension not registered"
-        warn "  install: flatpak install --user flathub org.flatpak.Builder"
-        warn "  then run: hifox install-systemconfig"
-      fi
-    fi
     hifox_deploy
     _bin="${HOME}/.local/bin"
     mkdir -p "${_bin}"
@@ -60,24 +63,34 @@ case "${cmd}" in
     [[ ":${PATH}:" == *":${_bin}:"* ]] || warn "add ${_bin} to PATH"
     ok "command: hifox"
     hifox_watch_install
-    log "done - launch Firefox once, close it, launch again"
+    echo ""
+    log "installed - launch Firefox, close it, launch again, then run: hifox verify"
     ;;
   deploy)
     [[ $# -le 1 ]] || die "deploy takes no arguments"
+    _acquire_operation_lock
     hifox_deploy
+    log "next: restart Firefox, then run: hifox verify"
     ;;
   verify)
     [[ $# -le 1 ]] || die "verify takes no arguments"
+    # no lock: verify must stay available mid-deploy, which it reports as staged
     _require_firefox
     source "${_dir}/lib/verify.sh"
     _hifox_verify
     ;;
   clean)
     [[ $# -le 1 ]] || die "clean takes no arguments"
+    _acquire_operation_lock
     hifox_clean
     ;;
   purge)
     [[ $# -le 2 ]] || die "usage: hifox purge [--flatpak|--standard]"
+    case "${2:-}" in
+      ""|--flatpak|--standard) ;;
+      *) die "usage: hifox purge [--flatpak|--standard]" ;;
+    esac
+    _acquire_operation_lock
     hifox_purge "${2:-}"
     ;;
   status)
@@ -93,14 +106,15 @@ case "${cmd}" in
     [[ $# -le 2 ]] || die "usage: hifox watch <install|remove|status>"
     sub="${2:-}"
     case "${sub}" in
-      install) hifox_watch_install ;;
-      remove)  hifox_watch_remove ;;
+      install) _acquire_operation_lock; hifox_watch_install ;;
+      remove)  _acquire_operation_lock; hifox_watch_remove ;;
       status)  hifox_watch_status ;;
       *)       die "usage: hifox watch <install|remove|status>" ;;
     esac
     ;;
   install-systemconfig)
     [[ $# -le 1 ]] || die "install-systemconfig takes no arguments"
+    _acquire_operation_lock
     hifox_install_systemconfig
     ;;
   *)
@@ -115,7 +129,7 @@ case "${cmd}" in
     log "  watch   install                 auto-deploy on repo file changes"
     log "  watch   remove                  disable auto-deploy"
     log "  watch   status                  show watcher status"
-    log "  install-systemconfig            register flatpak extension (autoconfig + policies in sandbox)"
+    log "  install-systemconfig            refresh Flatpak autoconfig + policies"
     exit 1
     ;;
 esac

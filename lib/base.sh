@@ -27,25 +27,32 @@ _check_command() {
 }
 
 _list_installations() {
-  if _check_command flatpak && flatpak info org.mozilla.firefox &>/dev/null; then
-    local arch fp_home pdir sdir
-    arch=$(flatpak --default-arch 2>/dev/null || uname -m)
-    fp_home="${HOME}/.var/app/org.mozilla.firefox"
-    sdir="${HOME}/.local/share/flatpak/extension/org.mozilla.firefox.systemconfig/${arch}/stable"
-    pdir=""
-    local cand
-    local cands=("${fp_home}/config/mozilla/firefox" "${fp_home}/.config/mozilla/firefox" "${fp_home}/.mozilla/firefox")
-    # Flatpak migration may leave multiple profile roots; prefer modern path over mtime.
-    for cand in "${cands[@]}"; do
-      [[ -d "${cand}" && -f "${cand}/profiles.ini" ]] && pdir="${cand}" && break
-    done
-    if [[ -z "${pdir}" ]]; then
+  local cand
+  if _check_command flatpak; then
+    local arch branch ref data_home fp_home pdir sdir
+    if ref=$(_flatpak_firefox_ref); then
+      IFS='|' read -r arch branch <<< "${ref}"
+      fp_home="${HOME}/.var/app/org.mozilla.firefox"
+      data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+      sdir="${data_home}/flatpak/extension/org.mozilla.firefox.systemconfig/${arch}/${branch}"
+      pdir=""
+      local cands=("${fp_home}/config/mozilla/firefox" "${fp_home}/.config/mozilla/firefox" "${fp_home}/.mozilla/firefox")
+      # Flatpak migration may leave multiple profile roots; prefer modern path over mtime.
       for cand in "${cands[@]}"; do
-        [[ -d "${cand}" ]] && pdir="${cand}" && break
+        [[ -d "${cand}" && -f "${cand}/profiles.ini" ]] && pdir="${cand}" && break
       done
+      if [[ -z "${pdir}" ]]; then
+        for cand in "${cands[@]}"; do
+          [[ -d "${cand}" ]] && pdir="${cand}" && break
+        done
+      fi
+      [[ -n "${pdir}" ]] || pdir="${fp_home}/.mozilla/firefox"
+      echo "flatpak|${pdir}|${sdir}/policies|${sdir}"
+    else
+      if flatpak info org.mozilla.firefox &>/dev/null; then
+        warn "cannot determine Firefox Flatpak architecture or branch - skipping Flatpak target"
+      fi
     fi
-    [[ -n "${pdir}" ]] || pdir="${fp_home}/.mozilla/firefox"
-    echo "flatpak|${pdir}|${sdir}/policies|${sdir}"
   fi
 
   local idir=""
@@ -55,6 +62,16 @@ _list_installations() {
   if [[ -n "${idir}" ]]; then
     echo "standard|${HOME}/.mozilla/firefox|/etc/firefox/policies|${idir}"
   fi
+}
+
+_flatpak_firefox_ref() {
+  local ref kind app arch branch extra
+  ref=$(LC_ALL=C flatpak info --show-ref org.mozilla.firefox 2>/dev/null) || return 1
+  IFS='/' read -r kind app arch branch extra <<< "${ref}"
+  [[ "${kind}" == app && "${app}" == org.mozilla.firefox && -z "${extra}" ]] || return 1
+  [[ -n "${arch}" && "${arch}" != *[!A-Za-z0-9._-]* ]] || return 1
+  [[ -n "${branch}" && "${branch}" != *[!A-Za-z0-9._-]* ]] || return 1
+  printf '%s|%s\n' "${arch}" "${branch}"
 }
 
 _target_file() { echo "${XDG_CONFIG_HOME:-${HOME}/.config}/hifox/target"; }
@@ -80,8 +97,11 @@ _read_target() {
 _active_installations() {
   local target
   target="$(_read_target)"
-  [[ -n "${target}" ]] || return 0
-  _list_installations | grep "^${target}|" || true
+  case "${target}" in
+    flatpak|standard) _list_installations | awk -F'|' -v target="${target}" '$1 == target' ;;
+    "") return 0 ;;
+    *) warn "invalid saved target: ${target}"; return 1 ;;
+  esac
 }
 
 _require_firefox() {
@@ -104,8 +124,8 @@ _ensure_dir() {
   return 1
 }
 
-_file_matches() {  # <src> <dst> - 0 if dst exists and matches src
-  [[ -f "$2" ]] && cmp -s "$1" "$2" 2>/dev/null
+_file_matches() {  # <src> <dst> - 0 if a regular, non-symlink dst matches src
+  [[ -f "$2" && ! -L "$2" ]] && cmp -s "$1" "$2" 2>/dev/null
 }
 
 _install_file() {
@@ -134,81 +154,143 @@ _desktop_dir() {
 
 _unit_dir() { echo "${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"; }
 
+# only for paths declared by profiles.ini; hifox's own literal paths need no check
+_canonical_contained_path() {
+  local root="${1%/}" candidate="${2%/}" root_real resolved
+  [[ -n "${root}" && -n "${candidate}" ]] || return 1
+  root_real=$(readlink -f -- "${root}" 2>/dev/null) || return 1
+  [[ -d "${root_real}" ]] || return 1
+  resolved=$(readlink -f -- "${candidate}" 2>/dev/null) || return 1
+  case "${resolved}" in
+    "${root_real}"/*) printf '%s\n' "${resolved}" ;;
+    *) return 1 ;;
+  esac
+}
+
+_canonical_profile_path() {
+  local profiles_dir="$1" candidate="$2"
+  [[ -d "${candidate}" && ! -L "${candidate}" ]] || return 1
+  _canonical_contained_path "${profiles_dir}" "${candidate}"
+}
+
+_profile_records() {
+  local profiles_dir="$1" mode="$2" ini="${1}/profiles.ini"
+  [[ ! -L "${ini}" ]] || return 2
+  [[ -e "${ini}" ]] || return 1
+  [[ -f "${ini}" ]] || return 2
+  awk -F= -v pd="${profiles_dir}" -v mode="${mode}" '
+    BEGIN { OFS="\t" }
+    function emit_profile(  candidate) {
+      if (!in_profile || path == "") return
+      candidate = (relative == "0" ? path : pd "/" path)
+      if (mode == "all") print "P", candidate
+      else if (is_default && default_path == "") default_path = candidate
+    }
+    /^\[/ {
+      emit_profile()
+      in_profile = ($0 ~ /^\[Profile/)
+      in_install = ($0 ~ /^\[Install/)
+      path = ""; relative = "1"; is_default = 0
+      next
+    }
+    in_install && /^Default=/ {
+      if (mode == "all") print "I", $2
+      else if (!install_seen) { install_path = $2; install_seen = 1 }
+      next
+    }
+    in_profile && /^Path=/ { path = $2; next }
+    in_profile && /^IsRelative=/ { relative = $2; next }
+    in_profile && /^Default=1/ { is_default = 1 }
+    END {
+      emit_profile()
+      if (mode == "default") {
+        if (install_path != "") print "I", install_path
+        if (default_path != "") print "P", default_path
+      }
+    }
+  ' "${ini}" 2>/dev/null || return 4
+}
+
+_resolve_profile_record() {
+  local profiles_dir="$1" kind="$2" path="$3" candidate
+  case "${kind}" in
+    I) [[ "${path}" != /* ]] || return 2; candidate="${profiles_dir}/${path}" ;;
+    P) candidate="${path}" ;;
+    *) return 2 ;;
+  esac
+  case "/${candidate}/" in */../*) return 2 ;; esac
+  [[ -e "${candidate}" || -L "${candidate}" ]] || return 3
+  _canonical_profile_path "${profiles_dir}" "${candidate}" || return 2
+}
 
 _find_profile() {
-  local profiles_dir="$1"
+  local profiles_dir="$1" records state=0 kind path resolved declared=false
   [[ -d "${profiles_dir}" ]] || return 1
+  records=$(_profile_records "${profiles_dir}" default) || state=$?
+  case "${state}" in
+    0) ;;
+    1) records="" ;;
+    2|4) return "${state}" ;;
+    *) return 4 ;;
+  esac
 
-  local ini="${profiles_dir}/profiles.ini"
-  if [[ -f "${ini}" ]]; then
-    local install_default
-    install_default=$(awk -F= '
-      /^\[Install/ { inst=1; next }
-      /^\[/ { inst=0 }
-      inst && /^Default=/ { print $2; exit }
-    ' "${ini}" 2>/dev/null) || true
-    if [[ -n "${install_default}" && "${install_default}" != *..* ]]; then
-      local resolved="${profiles_dir}/${install_default}"
-      [[ -d "${resolved}" ]] && echo "${resolved}" && return 0
-    fi
+  while IFS=$'\t' read -r kind path; do
+    [[ -n "${path}" ]] || continue
+    declared=true
+    state=0
+    resolved=$(_resolve_profile_record "${profiles_dir}" "${kind}" "${path}") || state=$?
+    case "${state}" in
+      0) printf '%s\n' "${resolved}"; return 0 ;;
+      2) return 2 ;;
+      3) ;;
+      *) return 4 ;;
+    esac
+  done <<< "${records}"
 
-    local default_path is_rel
-    IFS=$'\t' read -r default_path is_rel < <(awk -F= '
-      BEGIN { OFS="\t" }
-      /^\[/ {
-        if (in_p && p && d) { print p, r; exit }
-        in_p = ($0 ~ /^\[Profile/)
-        if (in_p) { p=""; d=0; r="1" }
-        next
-      }
-      in_p && /^Path=/ { p=$2 }
-      in_p && /^IsRelative=/ { r=$2 }
-      in_p && /^Default=1/ { d=1 }
-      END { if(p && d) print p, r }
-    ' "${ini}" 2>/dev/null) || true
-    if [[ -n "${default_path}" && "${default_path}" != *..* ]]; then
-      local resolved
-      if [[ "${is_rel}" == "0" ]]; then
-        resolved="${default_path}"
-      else
-        resolved="${profiles_dir}/${default_path}"
-      fi
-      [[ -d "${resolved}" ]] && echo "${resolved}" && return 0
-    fi
-  fi
-
+  # A broken declaration must not be hidden by an unrelated glob fallback.
+  ${declared} && return 2
   local dir
   for dir in "${profiles_dir}"/*.default-release "${profiles_dir}"/*.default; do
-    [[ -d "${dir}" ]] && echo "${dir}" && return 0
+    dir=$(_canonical_profile_path "${profiles_dir}" "${dir}") \
+      && printf '%s\n' "${dir}" && return 0
   done
   return 1
 }
 
 _list_profile_paths() {
-  local profiles_dir="$1"
-  local ini="${profiles_dir}/profiles.ini"
-  [[ -f "${ini}" ]] || return 1
-  awk -F= -v pd="${profiles_dir}" '
-    /^\[/ {
-      if (in_p && p!="") print (r=="0" ? p : pd"/"p)
-      in_p = ($0 ~ /^\[Profile/)
-      if (in_p) { p=""; r="1" }
-      next
-    }
-    in_p && /^Path=/ { p=$2 }
-    in_p && /^IsRelative=/ { r=$2 }
-    END { if(in_p && p!="") print (r=="0" ? p : pd"/"p) }
-  ' "${ini}" | while IFS= read -r _p; do
-    [[ "${_p}" == *".."* ]] && continue
-    [[ "${_p}" == "${profiles_dir}/"* ]] || continue
-    printf '%s\n' "${_p}"
-  done
+  local profiles_dir="$1" records kind path resolved state
+  local invalid=false unresolved=false
+  local -A emitted=()
+  records=$(_profile_records "${profiles_dir}" all) || return $?
+  while IFS=$'\t' read -r kind path; do
+    [[ -n "${path}" ]] || continue
+    state=0
+    resolved=$(_resolve_profile_record "${profiles_dir}" "${kind}" "${path}") || state=$?
+    case "${state}" in
+      0)
+        if [[ -z "${emitted[${resolved}]+set}" ]]; then
+          printf '%s\n' "${resolved}"
+          emitted["${resolved}"]=1
+        fi
+        ;;
+      2) invalid=true ;;
+      3) [[ "${kind}" == I ]] || unresolved=true ;;
+      *) return 4 ;;
+    esac
+  done <<< "${records}"
+  ${invalid} && return 2
+  ${unresolved} && return 3
+  return 0
 }
 
 _all_profile_paths() {
   local profiles_dir="$1"
-  local paths
-  paths=$(_list_profile_paths "${profiles_dir}" 2>/dev/null) || true
+  local paths list_state=0
+  paths=$(_list_profile_paths "${profiles_dir}" 2>/dev/null) || list_state=$?
+  if (( list_state == 2 || list_state == 3 || list_state == 4 )); then
+    [[ -z "${paths}" ]] || printf '%s\n' "${paths}"
+    return "${list_state}"
+  fi
   if [[ -n "${paths}" ]]; then
     printf '%s\n' "${paths}"
     return
@@ -216,9 +298,70 @@ _all_profile_paths() {
   _find_profile "${profiles_dir}" 2>/dev/null
 }
 
-_kill_firefox() {
-  pkill -x 'firefox(-esr)?(-bin)?' 2>/dev/null || true
-  flatpak kill org.mozilla.firefox 2>/dev/null || true
+_standard_firefox_pids() {
+  local install_dir="$1" install_real pid exe candidates rc=0
+  install_real=$(readlink -f -- "${install_dir}" 2>/dev/null) || return 1
+  candidates=$(pgrep -x 'firefox(-esr)?(-bin)?' 2>/dev/null) || rc=$?
+  (( rc <= 1 )) || return 1
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    exe=$(readlink -- "/proc/${pid}/exe" 2>/dev/null) || continue
+    exe="${exe% (deleted)}"
+    case "${exe}" in
+      "${install_real}"/*) printf '%s\n' "${pid}" ;;
+    esac
+  done <<< "${candidates}"
+}
+
+_firefox_running() {
+  local target="$1" install_dir="${2:-}"
+  case "${target}" in
+    flatpak)
+      _check_command flatpak || return 1
+      local applications
+      applications=$(flatpak ps --columns=application 2>/dev/null) || return 2
+      grep -Fxq 'org.mozilla.firefox' <<< "${applications}"
+      ;;
+    standard)
+      [[ -n "${install_dir}" ]] || return 1
+      local pids
+      pids=$(_standard_firefox_pids "${install_dir}") || return 2
+      [[ -n "${pids}" ]]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+_stop_firefox() {
+  local target="$1" install_dir="${2:-}" pids
+  case "${target}" in
+    flatpak)
+      local running_rc
+      _firefox_running flatpak && running_rc=0 || running_rc=$?
+      (( running_rc == 1 )) && return 0
+      (( running_rc == 0 )) || return 1
+      flatpak kill org.mozilla.firefox 2>/dev/null
+      ;;
+    standard)
+      pids=$(_standard_firefox_pids "${install_dir}") || return 1
+      [[ -n "${pids}" ]] || return 0
+      # shellcheck disable=SC2086  # pids contains only numeric lines from pgrep
+      kill ${pids} 2>/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+_wait_firefox_stopped() {
+  local target="$1" install_dir="${2:-}" attempts="${3:-5}" attempt running_rc
+  for ((attempt = 0; attempt < attempts; attempt++)); do
+    _firefox_running "${target}" "${install_dir}" && running_rc=0 || running_rc=$?
+    (( running_rc == 1 )) && return 0
+    (( running_rc == 0 )) || return 1
+    sleep 1
+  done
+  _firefox_running "${target}" "${install_dir}" && running_rc=0 || running_rc=$?
+  (( running_rc == 1 ))
 }
 
 _can_sudo_chattr() {
@@ -234,11 +377,12 @@ _can_sudo_chattr() {
 }
 
 _is_immutable() {
-  lsattr "$1" 2>/dev/null | awk '{print $1}' | grep -q i
+  [[ ! -L "$1" ]] && lsattr "$1" 2>/dev/null | awk '{print $1}' | grep -q i
 }
 
 _chattr_unlock() {
   local f="$1"
+  [[ -L "${f}" ]] && return 0
   [[ -f "${f}" ]] || return 0
   if _can_sudo_chattr; then
     sudo -n chattr -i "${f}" 2>/dev/null
@@ -272,9 +416,9 @@ _generate_autoconfig() {
   _mn=$(grep -c 'per-webapp overrides' "${wcfg}" 2>/dev/null) || _mn=0
   (( _mn == 1 )) || die "webapp.cfg: 'per-webapp overrides' marker count=${_mn}, expected 1"
 
-  cat "${_dir}/config/global_lockprefs.cfg"
+  cat "${_dir}/config/global_lockprefs.cfg" || return 1
 
-  awk '{print} /per-webapp overrides/{exit}' "${wcfg}"
+  awk '{print} /per-webapp overrides/{exit}' "${wcfg}" || return 1
 
   local wdir wn
   for wdir in "${_dir}/webapp"/*/; do
@@ -285,13 +429,13 @@ _generate_autoconfig() {
     echo "  if (profileDir === \"${wn}\") {"
     echo "    isWebapp = true;"
     if [[ -f "${wdir}/prefs.cfg" ]]; then
-      sed 's/^/    /' "${wdir}/prefs.cfg"
+      sed 's/^/    /' "${wdir}/prefs.cfg" || return 1
     fi
     echo "  }"
     echo ""
   done
 
-  awk 'p; /per-webapp overrides/{p=1}' "${wcfg}"
+  awk 'p; /per-webapp overrides/{p=1}' "${wcfg}" || return 1
 
-  cat "${_dir}/config/generate_pref_dump.cfg"
+  cat "${_dir}/config/generate_pref_dump.cfg" || return 1
 }

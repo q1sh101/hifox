@@ -7,6 +7,13 @@ _policy_count() {
     "$1" 2>/dev/null || echo "?"
 }
 
+_relock_file() {
+  local file="$1" label="$2"
+  sudo -n chattr +i "${file}" 2>/dev/null && return 0
+  warn "${label}: re-lock failed - file remains writable"
+  return 1
+}
+
 _deploy_policies() {
   local policies_dir="$1" install_dir="${2:-}"
   local src="${_dir}/config/policies.json"
@@ -37,10 +44,8 @@ _deploy_policies() {
     if _is_immutable "${dst}"; then
       tag=", immutable"
     elif ${can_chattr}; then
-      if sudo -n chattr +i "${dst}" 2>/dev/null; then
+      if _relock_file "${dst}" policies.json; then
         tag=", immutable"
-      else
-        warn "policies.json: re-lock failed - file remains writable"
       fi
     fi
     ok "policies.json ($(_policy_count "${src}") policies${tag}, unchanged)"
@@ -50,18 +55,13 @@ _deploy_policies() {
   _chattr_unlock "${dst}" || die "cannot unlock ${dst} (immutable)"
   if ! _install_file "${src}" "${dst}"; then
     if ${can_chattr} && [[ -f "${dst}" ]]; then
-      sudo -n chattr +i "${dst}" 2>/dev/null \
-        || warn "policies.json: re-lock failed - file remains writable"
+      _relock_file "${dst}" policies.json || true
     fi
     die "cannot write ${dst}"
   fi
   local tag=""
-  if ${can_chattr}; then
-    if sudo -n chattr +i "${dst}" 2>/dev/null; then
-      tag=", immutable"
-    else
-      warn "policies.json: re-lock failed - file remains writable"
-    fi
+  if ${can_chattr} && _relock_file "${dst}" policies.json; then
+    tag=", immutable"
   fi
   ok "policies.json ($(_policy_count "${src}") policies${tag})"
 }
@@ -86,8 +86,7 @@ _deploy_userjs() {
     # idempotent: skip chattr cycle when user.js matches (no-TTY watcher refire safe).
     if _file_matches "${src}" "${target}"; then
       if ${can_chattr} && ! _is_immutable "${target}"; then
-        sudo -n chattr +i "${target}" 2>/dev/null \
-          || warn "$(basename "${profile}"): user.js re-lock failed - file remains writable"
+        _relock_file "${target}" "$(basename "${profile}"): user.js" || true
       fi
       ((deployed++)) || true
       continue
@@ -97,14 +96,12 @@ _deploy_userjs() {
     fi
     if ! _install_file "${src}" "${target}"; then
       if ${can_chattr} && [[ -f "${target}" ]]; then
-        sudo -n chattr +i "${target}" 2>/dev/null \
-          || warn "$(basename "${profile}"): user.js re-lock failed - file remains writable"
+        _relock_file "${target}" "$(basename "${profile}"): user.js" || true
       fi
       warn "cannot copy user.js to $(basename "${profile}")"; continue
     fi
     if ${can_chattr}; then
-      sudo -n chattr +i "${target}" 2>/dev/null \
-        || warn "$(basename "${profile}"): user.js re-lock failed - file remains writable"
+      _relock_file "${target}" "$(basename "${profile}"): user.js" || true
     fi
     ((deployed++)) || true
   done < <(_all_profile_paths "${profiles_dir}")
@@ -141,12 +138,13 @@ _deploy_homepage() {
       *) continue ;;
     esac
     ((candidates++)) || true
-    mkdir -p "${p}/chrome"
+    mkdir -p "${p}/chrome" || { warn "homepage: cannot create chrome dir: ${name}"; continue; }
     css_dst="${p}/chrome/userContent.css"
     logo_dst="${p}/chrome/hifox.png"
-    { _file_matches "${css_src}" "${css_dst}" || cp "${css_src}" "${css_dst}" 2>/dev/null; } && \
-    { _file_matches "${logo_src}" "${logo_dst}" || cp "${logo_src}" "${logo_dst}" 2>/dev/null; } && \
-    ((count++)) || true
+    if { _file_matches "${css_src}" "${css_dst}" || _install_file "${css_src}" "${css_dst}"; } \
+      && { _file_matches "${logo_src}" "${logo_dst}" || _install_file "${logo_src}" "${logo_dst}"; }; then
+      ((count++)) || true
+    fi
   done
   if (( count > 0 )); then
     ok "homepage: hifox branding -> ${count} profiles"
@@ -157,14 +155,6 @@ _deploy_homepage() {
 
 _deploy_autoconfig() {
   local sysconfig_dir="$1"
-
-  # Flatpak Firefox only loads this dir after the systemconfig extension is registered.
-  if [[ "${sysconfig_dir}" == *"/org.mozilla.firefox.systemconfig/"* ]]; then
-    if _check_command flatpak && ! flatpak info org.mozilla.firefox.systemconfig &>/dev/null; then
-      warn "flatpak: org.mozilla.firefox.systemconfig extension not registered"
-      warn "  run: hifox install-systemconfig"
-    fi
-  fi
 
   [[ -f "${_dir}/config/autoconfig.js" ]] || die "autoconfig.js not found"
   [[ -f "${_dir}/config/global_lockprefs.cfg" ]] || die "global_lockprefs.cfg not found"
@@ -184,7 +174,7 @@ _deploy_autoconfig() {
   tmp=$(mktemp)
   # ${tmp:-} keeps EXIT trap safe after the function-local goes out of scope.
   trap 'rm -f "${tmp:-}"' EXIT
-  _generate_autoconfig > "${tmp}"
+  _generate_autoconfig > "${tmp}" || die "cannot generate autoconfig.cfg"
   local cfg_dst="${sysconfig_dir}/autoconfig.cfg"
   if _file_matches "${tmp}" "${cfg_dst}"; then
     rm -f "${tmp}"
@@ -252,35 +242,41 @@ _deploy_webapp_profiles() {
     fi
 
     wprofile="${profiles_dir}/${wname}"
-    [[ -d "${wprofile}" ]] || mkdir -p "${wprofile}"
+    if ! mkdir -p "${wprofile}/chrome"; then
+      warn "${wname}: profile creation failed"
+      continue
+    fi
     _register_profile "${profiles_dir}" "${wname}"
 
-    if [[ -d "${wprofile}" ]]; then
-      if mkdir -p "${wprofile}/chrome" \
-        && cp "${css_src}" "${wprofile}/chrome/userChrome.css"; then
-        if [[ -f "${wdir}/userChrome.css" ]]; then
-          printf '\n' >> "${wprofile}/chrome/userChrome.css"
-          cat "${wdir}/userChrome.css" >> "${wprofile}/chrome/userChrome.css"
-        fi
-        ok "${wname}: profile ready"
-      else
-        warn "${wname}: file copy failed"
+    local css_dst="${wprofile}/chrome/userChrome.css" css_tmp
+    css_tmp=$(mktemp) || die "cannot create temporary webapp stylesheet"
+    if {
+      cat "${css_src}"
+      if [[ -f "${wdir}/userChrome.css" ]]; then
+        printf '\n'
+        cat "${wdir}/userChrome.css"
       fi
+    } > "${css_tmp}" && _install_file "${css_tmp}" "${css_dst}"; then
+      ok "${wname}: profile ready"
     else
-      warn "${wname}: profile creation failed"
+      warn "${wname}: file copy failed"
     fi
+    rm -f "${css_tmp}"
   done
 }
 
 _deploy_desktop_entries() {
-  local launcher="${_dir}/launch.sh"
+  local installations="${1:-}" launcher="${_dir}/launch.sh"
   local desktop_dir
   desktop_dir="$(_desktop_dir)"
   local pixmap_dir="${HOME}/.local/share/pixmaps"
 
-  local t pdir poldir sdir
-  IFS='|' read -r t pdir poldir sdir < <(_active_installations | head -1)
-  [[ -n "${t}" ]] || return 0
+  if [[ -z "${installations}" ]]; then
+    installations=$(_active_installations) || return 1
+  fi
+  local t pdir poldir sdir desktop_error=false
+  IFS='|' read -r t pdir poldir sdir <<< "${installations%%$'\n'*}"
+  [[ -n "${t}" ]] || return 1
 
   local icon="org.mozilla.firefox"
   if [[ "${t}" == "standard" ]]; then
@@ -294,6 +290,9 @@ _deploy_desktop_entries() {
   local ff_basename="firefox.desktop"
   [[ "${t}" == "flatpak" ]] && ff_basename="org.mozilla.firefox.desktop"
   local ff_entry="${desktop_dir}/${ff_basename}"
+  expected+=("${ff_basename}")
+  local ff_tmp
+  ff_tmp=$(mktemp) || die "cannot create temporary desktop entry"
   printf '%s\n' \
     "[Desktop Entry]" \
     "Name=Firefox" \
@@ -303,10 +302,14 @@ _deploy_desktop_entries() {
     "Type=Application" \
     "Categories=Network;WebBrowser;" \
     "StartupNotify=true" \
-    "StartupWMClass=firefox" > "${ff_entry}"
-  chmod 644 "${ff_entry}" 2>/dev/null || true
-  expected+=("${ff_basename}")
-  ok "${t}: Firefox shadow -> ${ff_basename}"
+    "StartupWMClass=firefox" > "${ff_tmp}"
+  if _install_file "${ff_tmp}" "${ff_entry}"; then
+    ok "${t}: Firefox shadow -> ${ff_basename}"
+  else
+    warn "cannot write desktop entry: ${ff_basename}"
+    desktop_error=true
+  fi
+  rm -f "${ff_tmp}"
 
   local wdir wname
   for wdir in "${_dir}/webapp"/*/; do
@@ -322,20 +325,29 @@ _deploy_desktop_entries() {
       icon_hash=$(cksum "${wdir}/${wname}.png" | awk '{print $1}')
       icon_target="${pixmap_dir}/${wname}-${icon_hash}.png"
       command rm -f "${pixmap_dir}/${wname}.png" "${pixmap_dir}/${wname}"-[0-9]*.png 2>/dev/null || true
-      cp "${wdir}/${wname}.png" "${icon_target}"
-      chmod 644 "${icon_target}" 2>/dev/null || true
+      if ! _install_file "${wdir}/${wname}.png" "${icon_target}"; then
+        warn "${wname}: icon copy failed"
+        desktop_error=true
+        icon_target=""
+      fi
     fi
 
     [[ -f "${wdir}/${wname}.desktop" ]] || continue
     local desktop_file="${desktop_dir}/org.mozilla.firefox.${wname}-web.desktop"
-    local content
+    expected+=("$(basename "${desktop_file}")")
+    local content desktop_tmp
     content=$(<"${wdir}/${wname}.desktop")
     content="${content//__LAUNCH_SH__/\"${launcher}\" --target ${t}}"
-    printf '%s\n' "${content}" > "${desktop_file}"
-    [[ -n "${icon_target}" ]] && sed -i "s|^Icon=.*$|Icon=${icon_target}|" "${desktop_file}"
-    chmod 644 "${desktop_file}" 2>/dev/null || true
-    expected+=("$(basename "${desktop_file}")")
-    ok "${wname}: .desktop -> $(basename "${desktop_file}")"
+    desktop_tmp=$(mktemp) || die "cannot create temporary desktop entry"
+    printf '%s\n' "${content}" > "${desktop_tmp}"
+    [[ -z "${icon_target}" ]] || sed -i "s|^Icon=.*$|Icon=${icon_target}|" "${desktop_tmp}"
+    if _install_file "${desktop_tmp}" "${desktop_file}"; then
+      ok "${wname}: .desktop -> $(basename "${desktop_file}")"
+    else
+      warn "${wname}: desktop-entry write failed"
+      desktop_error=true
+    fi
+    rm -f "${desktop_tmp}"
   done
 
   local entry exp keep
@@ -363,10 +375,26 @@ _deploy_desktop_entries() {
     fi
     ok "pruned: $(basename "${entry}")"
   done
+  ! ${desktop_error}
 }
 
 hifox_deploy() {
   _require_firefox
+
+  local installations
+  installations=$(_active_installations) || die "cannot determine active Firefox installation"
+  [[ -n "${installations}" ]] || die "no active Firefox installation"
+  local check_type check_pdir check_poldir check_sdir profile_state
+  while IFS='|' read -r check_type check_pdir check_poldir check_sdir; do
+    [[ -e "${check_pdir}/profiles.ini" || -L "${check_pdir}/profiles.ini" ]] || continue
+    profile_state=0
+    _list_profile_paths "${check_pdir}" >/dev/null 2>&1 || profile_state=$?
+    case "${profile_state}" in
+      2) die "${check_type}: profiles.ini contains an unsafe profile path" ;;
+      3) warn "${check_type}: profiles.ini contains a profile path that does not exist yet" ;;
+      4) die "${check_type}: profiles.ini cannot be read reliably" ;;
+    esac
+  done <<< "${installations}"
 
   log "deploying browser hardening..."
   echo ""
@@ -384,18 +412,19 @@ hifox_deploy() {
       warn "${type}: deploy failed"
       had_error=true
     fi
-  done < <(_active_installations)
+  done <<< "${installations}"
 
   if ${had_error}; then
     die "deploy failed - skipping .desktop entries (no orphan icons)"
   fi
 
-  _deploy_desktop_entries
+  _deploy_desktop_entries "${installations}" || die "desktop entry deployment failed"
   echo ""
   if systemctl --user is-active hifox-watch.path &>/dev/null; then
     (hifox_watch_install) 2>/dev/null || warn "watcher refresh failed - run: hifox watch install"
   fi
 
-  hifox_clean
-  log "done - restart Firefox -> hifox verify"
+  hifox_clean \
+    || warn "remnant cleanup skipped - close Firefox and run: hifox clean"
+  ok "deploy complete"
 }

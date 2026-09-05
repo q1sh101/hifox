@@ -33,7 +33,7 @@ EOF
     local f
     for f in "${_dir}/config"/*; do
       [[ -f "${f}" ]] || continue
-      case "$(basename "${f}")" in generated_pref_dump.*.txt) continue ;; esac
+      case "$(basename "${f}")" in generated_pref_dump.*) continue ;; esac
       echo "PathModified=${f}"
     done
     for f in "${_dir}/webapp/shared"/*; do
@@ -109,12 +109,15 @@ WantedBy=timers.target
 EOF
 
   systemctl --user daemon-reload
+  # systemctl reports "Created symlink" on stderr, where real errors also go
+  local unit unit_err
   for unit in hifox-watch.path hifox-verify.path; do
-    systemctl --user enable "${unit}" || die "failed to enable ${unit}"
+    unit_err=$(systemctl --user enable "${unit}" 2>&1) \
+      || die "failed to enable ${unit}: ${unit_err}"
     systemctl --user restart "${unit}" || die "failed to restart ${unit}"
   done
-  systemctl --user enable --now hifox-verify.timer \
-    || die "failed to enable hifox-verify.timer"
+  unit_err=$(systemctl --user enable --now hifox-verify.timer 2>&1) \
+    || die "failed to enable hifox-verify.timer: ${unit_err}"
 
   ok "watch installed - repo changes auto-deploy"
   ok "verify installed - live drift detection + 30min fallback"
@@ -122,17 +125,16 @@ EOF
 
 hifox_watch_remove() {
   _require_command systemctl
-  local udir
+  local udir unit
   udir="$(_unit_dir)"
 
-  systemctl --user disable --now hifox-watch.path 2>/dev/null || true
-  systemctl --user disable --now hifox-verify.path 2>/dev/null || true
-  systemctl --user disable --now hifox-verify.timer 2>/dev/null || true
-  rm -f "${udir}/hifox-deploy.service"
-  rm -f "${udir}/hifox-watch.path"
-  rm -f "${udir}/hifox-verify.service"
-  rm -f "${udir}/hifox-verify.path"
-  rm -f "${udir}/hifox-verify.timer"
+  for unit in hifox-watch.path hifox-verify.path hifox-verify.timer; do
+    systemctl --user disable --now "${unit}" 2>/dev/null || true
+  done
+  for unit in hifox-deploy.service hifox-watch.path hifox-verify.service \
+    hifox-verify.path hifox-verify.timer; do
+    rm -f "${udir}/${unit}"
+  done
   systemctl --user daemon-reload
 
   ok "watch + verify removed"

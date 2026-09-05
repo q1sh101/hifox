@@ -1,89 +1,42 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # _dir provided by hifox.sh
+# shellcheck disable=SC2154  # deploy helpers and _dir provided by hifox.sh
 
-# Firefox Flatpak only loads these files through the systemconfig extension inside its sandbox.
+_flatpak_sandbox_file_matches() {
+  local host_file="$1" sandbox_file="$2" snapshot
+  snapshot=$(mktemp) || return 1
+  if timeout -k 2s 15s flatpak run --command=cat org.mozilla.firefox "${sandbox_file}" \
+      > "${snapshot}" 2>/dev/null \
+    && cmp -s "${host_file}" "${snapshot}"; then
+    rm -f "${snapshot}"
+    return 0
+  fi
+  rm -f "${snapshot}"
+  return 1
+}
 
+# systemconfig is an unmaintained extension: populating its directory is enough, no Builder
 hifox_install_systemconfig() {
   _require_command flatpak
-
+  _require_command timeout
   flatpak info org.mozilla.firefox &>/dev/null \
     || die "org.mozilla.firefox flatpak not found"
 
-  local builder=""
-  if _check_command flatpak-builder; then
-    builder="flatpak-builder"
-  elif flatpak info org.flatpak.Builder &>/dev/null; then
-    builder="flatpak run --filesystem=host org.flatpak.Builder"
-  else
-    die "flatpak-builder missing - install: flatpak install --user flathub org.flatpak.Builder"
-  fi
-
-  local ff_runtime ff_branch sdk_ver
-  ff_runtime=$(LC_ALL=C flatpak info org.mozilla.firefox 2>/dev/null \
-    | awk -F': *' '/^[[:space:]]*Runtime:/ {print $2}')
-  ff_branch=$(LC_ALL=C flatpak info org.mozilla.firefox 2>/dev/null \
-    | awk -F': *' '/^[[:space:]]*Branch:/ {print $2}')
-  sdk_ver="${ff_runtime##*/}"
-  [[ -n "${sdk_ver}" && -n "${ff_branch}" ]] || die "could not parse Firefox flatpak metadata"
-
-  [[ -f "${_dir}/config/policies.json" ]] || die "policies.json not found"
-  if _check_command python3; then
-    python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${_dir}/config/policies.json" 2>/dev/null \
-      || die "policies.json: invalid JSON"
-  fi
-  [[ -f "${_dir}/config/autoconfig.js" ]] || die "autoconfig.js not found"
-  [[ -f "${_dir}/config/global_lockprefs.cfg" ]] || die "global_lockprefs.cfg not found"
-  [[ -f "${_dir}/config/generate_pref_dump.cfg" ]] || die "generate_pref_dump.cfg not found"
-  [[ -f "${_dir}/webapp/shared/webapp.cfg" ]] || die "webapp.cfg not found"
-
-  log "building org.mozilla.firefox.systemconfig (sdk ${sdk_ver}, branch ${ff_branch})..."
-
-  local stage
-  mkdir -p "${XDG_CACHE_HOME:-${HOME}/.cache}"
-  stage=$(mktemp -d "${XDG_CACHE_HOME:-${HOME}/.cache}/hifox-build.XXXXXX")
-  trap 'rm -rf "${stage:?}"' EXIT
-
-  mkdir -p "${stage}/content"
-  _generate_autoconfig > "${stage}/content/autoconfig.cfg"
-  cp "${_dir}/config/policies.json" "${stage}/content/policies.json"
-  cp "${_dir}/config/autoconfig.js" "${stage}/content/autoconfig.js"
-
-  cat > "${stage}/manifest.yml" <<EOF
-id: org.mozilla.firefox.systemconfig
-runtime: org.mozilla.firefox
-runtime-version: ${ff_branch}
-sdk: org.freedesktop.Sdk//${sdk_ver}
-branch: ${ff_branch}
-build-extension: true
-separate-locales: false
-modules:
-  - name: hifox-config
-    buildsystem: simple
-    sources:
-      - type: dir
-        path: content
-    build-commands:
-      - install -Dm 644 autoconfig.cfg "\${FLATPAK_DEST}/autoconfig.cfg"
-      - install -Dm 644 autoconfig.js  "\${FLATPAK_DEST}/defaults/pref/autoconfig.js"
-      - install -Dm 644 policies.json  "\${FLATPAK_DEST}/policies/policies.json"
-EOF
-
-  # --disable-rofiles-fuse: avoid fuse (works under sandboxed flatpak run org.flatpak.Builder)
-  # --state-dir: keep flatpak-builder's cache inside the temp stage (no .flatpak-builder/ in cwd)
-  # shellcheck disable=SC2086  # builder may be multi-word (flatpak run ...)
-  ${builder} --user --install --force-clean --install-deps-from=flathub \
-    --disable-rofiles-fuse \
-    --state-dir="${stage}/state" \
-    --repo="${stage}/repo" "${stage}/build" "${stage}/manifest.yml" \
-    || die "extension build failed"
-
-  flatpak info org.mozilla.firefox.systemconfig &>/dev/null \
-    || die "extension built but flatpak does not see it"
-
-  trap - EXIT
-  rm -rf "${stage:?}"
-
-  ok "systemconfig extension installed (branch ${ff_branch})"
-  log "restart Firefox - autoconfig.cfg + policies.json now load in sandbox"
-  log "re-run after extension uninstall or Firefox runtime changes"
+  local found=false type _pdir poldir sdir
+  while IFS='|' read -r type _pdir poldir sdir; do
+    [[ "${type}" == "flatpak" ]] || continue
+    found=true
+    _deploy_policies "${poldir}" "${sdir}"
+    _deploy_autoconfig "${sdir}"
+    _flatpak_sandbox_file_matches "${sdir}/autoconfig.cfg" \
+      /app/etc/firefox/autoconfig.cfg \
+      || die "systemconfig refreshed, but autoconfig.cfg is not visible in the Firefox sandbox"
+    _flatpak_sandbox_file_matches "${sdir}/defaults/pref/autoconfig.js" \
+      /app/etc/firefox/defaults/pref/autoconfig.js \
+      || die "systemconfig refreshed, but autoconfig.js is not visible in the Firefox sandbox"
+    _flatpak_sandbox_file_matches "${poldir}/policies.json" \
+      /app/etc/firefox/policies/policies.json \
+      || die "systemconfig refreshed, but policies.json is not visible in the Firefox sandbox"
+    ok "systemconfig refreshed (branch $(basename "${sdir}"))"
+  done < <(_list_installations)
+  ${found} || die "could not resolve Firefox Flatpak systemconfig path"
 }

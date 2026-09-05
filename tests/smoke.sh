@@ -30,52 +30,7 @@ _test_fail() {
   fi
 }
 
-_in_base()   { bash -c "source '${_dir}/lib/base.sh'; _dir='${_dir}'; $1"; }
-_in_deploy() { bash -c "source '${_dir}/lib/base.sh'; source '${_dir}/lib/deploy.sh'; _dir='${_dir}'; $1"; }
-
-_ac_grep()   { _test "$1" _in_base "_generate_autoconfig | grep -q '$2'"; }
-_pol_q()     { python3 -c "import json,sys; d=json.load(open('${_dir}/config/policies.json')); sys.exit(0 if $1 else 1)"; }
-_with_xdg()  { bash -c "export XDG_CONFIG_HOME='$1'; source '${_dir}/lib/base.sh'; $2"; }
-
-_launcher_check() {
-  local _name="$1"
-  case "${_name}" in ''|.*|*[!A-Za-z0-9._-]*) return 1 ;; esac
-  return 0
-}
-
-_validate() {
-  bash -c 'source "$1/lib/base.sh"; _is_valid_webapp_name "$2"' _ "${_dir}" "$1"
-}
-
-_make_pdir() {
-  local d="$1" ini="$2"; shift 2
-  mkdir -p "${d}"
-  printf '%s' "${ini}" > "${d}/profiles.ini"
-  for sub in "$@"; do mkdir -p "${d}/${sub}"; done
-}
-
-_fresh_ini() {
-  local d="$1"
-  rm -rf "${d}"; mkdir -p "${d}"
-  cat > "${d}/profiles.ini" << 'EOF'
-[Profile0]
-Name=default
-IsRelative=1
-Path=aaa.default
-Default=1
-EOF
-}
-
-_make_verify_repo() {
-  local repo="$1"
-  mkdir -p "${repo}"
-  cp -a "${_dir}/config" "${repo}/config"
-  cp -a "${_dir}/webapp" "${repo}/webapp"
-}
-
-_gen_autoconfig_for() {
-  bash -c 'source "$1/lib/base.sh"; _dir="$2"; _generate_autoconfig' _ "${_dir}" "$1"
-}
+_section() { printf '\n=== %s ===\n' "$1"; }
 
 _fake_runtime_dump() {
   sed -n 's/^lockPref("\([^"]*\)", *\(.*\));.*/\1 = \2 [LOCKED]/p' \
@@ -84,732 +39,552 @@ _fake_runtime_dump() {
   printf '_user_js.canary = hifox\n'
 }
 
-_make_verify_fixture() {
-  local root="$1" repo="$2" dump="${3:-}"
-  local profile="${root}/profile"
-  local poldir="${root}/policies"
-  local sdir="${root}/sys"
+_fake_webapp_dump() {
+  local app="$1" line key value
+  local -A overrides=() emitted=()
+  while IFS='|' read -r key value; do
+    [[ -n "${key}" ]] && overrides["${key}"]="${value}"
+  done < <(sed -n 's/^lockPref("\([^"]*\)", *\(.*\));.*/\1|\2/p' \
+    "${_dir}/webapp/${app}/prefs.cfg")
+  while IFS= read -r line; do
+    key="${line%% = *}"
+    if [[ -n "${overrides[${key}]+set}" ]]; then
+      value="${overrides[${key}]}"; value="${value%\"}"; value="${value#\"}"
+      printf '%s = %s [LOCKED]\n' "${key}" "${value}"
+      emitted["${key}"]=1
+    else
+      printf '%s\n' "${line}"
+    fi
+  done < <(_fake_runtime_dump)
+  for key in "${!overrides[@]}"; do
+    [[ -n "${emitted[${key}]+set}" ]] && continue
+    value="${overrides[${key}]}"; value="${value%\"}"; value="${value#\"}"
+    printf '%s = %s [LOCKED]\n' "${key}" "${value}"
+  done
+}
 
-  mkdir -p "${profile}" "${poldir}" "${sdir}/defaults/pref"
+_cli_contract() {
+  local out cmd name
+  local -a argv=()
+  for cmd in "" badcmd "deploy extra" "install" "install --garbage" \
+    "purge --garbage" "watch" "watch evil" "install-systemconfig extra"; do
+    argv=(); read -r -a argv <<< "${cmd}" || true
+    bash "${_dir}/hifox.sh" "${argv[@]}" >/dev/null 2>&1 && return 1
+  done
+  bash "${_dir}/launch.sh" --target garbage >/dev/null 2>&1 && return 1
+  out=$(bash "${_dir}/hifox.sh" 2>&1 || true)
+  for name in install deploy verify clean purge status logs watch install-systemconfig; do
+    grep -qE " ${name}( |$)" <<< "${out}" || return 1
+  done
+  source "${_dir}/lib/base.sh"
+  for name in app web-app web_app org.example a; do _is_valid_webapp_name "${name}" || return 1; done
+  for name in '' 'evil;cmd' 'foo/bar' 'a b' 'a$b' 'foo|bar'; do
+    ! _is_valid_webapp_name "${name}" || return 1
+  done
+  XDG_CONFIG_HOME="${_tmpdir}/target" _save_target flatpak
+  [[ "$(XDG_CONFIG_HOME="${_tmpdir}/target" _read_target)" == flatpak ]]
+  XDG_CONFIG_HOME="${_tmpdir}/target" _save_target standard
+  [[ "$(XDG_CONFIG_HOME="${_tmpdir}/target" _read_target)" == standard ]]
+}
+
+_profile_contract() {
+  local root="$1" out rc
+  source "${_dir}/lib/base.sh"
+
+  mkdir -p "${root}/install/a.default" "${root}/install/b.default"
+  printf '[InstallA]\nDefault=a.default\n\n[Profile0]\nIsRelative=1\nPath=b.default\nDefault=1\n' \
+    > "${root}/install/profiles.ini"
+  [[ "$(_find_profile "${root}/install")" == "${root}/install/a.default" ]] || return 1
+
+  mkdir -p "${root}/orphan/real.default"
+  printf '[InstallA]\nDefault=missing.default\n\n[Profile0]\nIsRelative=1\nPath=real.default\nDefault=1\n' \
+    > "${root}/orphan/profiles.ini"
+  [[ "$(_find_profile "${root}/orphan")" == "${root}/orphan/real.default" ]] || return 1
+
+  mkdir -p "${root}/bad-install/real.default" "${root}/outside.default"
+  printf '[InstallA]\nDefault=../outside.default\n\n[Profile0]\nIsRelative=1\nPath=real.default\nDefault=1\n' \
+    > "${root}/bad-install/profiles.ini"
+  rc=0; _find_profile "${root}/bad-install" >/dev/null || rc=$?; (( rc == 2 )) || return 1
+
+  mkdir -p "${root}/absolute/inside.default"
+  printf '[Profile0]\nIsRelative=0\nPath=%s\nDefault=1\n' "${root}/absolute/inside.default" \
+    > "${root}/absolute/profiles.ini"
+  [[ "$(_find_profile "${root}/absolute")" == "${root}/absolute/inside.default" ]] || return 1
+  printf '[Profile0]\nIsRelative=0\nPath=%s\nDefault=1\n' "${root}/outside.default" \
+    > "${root}/absolute/profiles.ini"
+  rc=0; _list_profile_paths "${root}/absolute" >/dev/null || rc=$?; (( rc == 2 )) || return 1
+
+  mkdir -p "${root}/mixed/good.default" "${root}/mixed/foo" "${root}/mixed/bar"
+  printf '[Profile0]\nIsRelative=1\nPath=good.default\n\n[Profile1]\nIsRelative=1\nPath=foo/../bar\n' \
+    > "${root}/mixed/profiles.ini"
+  rc=0; out=$(_list_profile_paths "${root}/mixed") || rc=$?
+  (( rc == 2 )) && [[ "${out}" == "${root}/mixed/good.default" ]] || return 1
+
+  mkdir -p "${root}/symlink"; ln -s "${root}/outside.default" "${root}/symlink/evil.default"
+  printf '[Profile0]\nIsRelative=1\nPath=evil.default\nDefault=1\n' > "${root}/symlink/profiles.ini"
+  rc=0; _find_profile "${root}/symlink" >/dev/null || rc=$?; (( rc == 2 )) || return 1
+
+  for kind in directory fifo dangling; do
+    mkdir -p "${root}/${kind}/fallback.default"
+    case "${kind}" in
+      directory) mkdir "${root}/${kind}/profiles.ini" ;;
+      fifo) mkfifo "${root}/${kind}/profiles.ini" ;;
+      dangling) ln -s "${root}/missing.ini" "${root}/${kind}/profiles.ini" ;;
+    esac
+    rc=0; _all_profile_paths "${root}/${kind}" >/dev/null || rc=$?; (( rc == 2 )) || return 1
+  done
+
+  mkdir -p "${root}/glob/x.default-release"
+  [[ "$(_all_profile_paths "${root}/glob")" == "${root}/glob/x.default-release" ]]
+}
+
+_autoconfig_contract() {
+  local output="$1" second marker app tail name
+  source "${_dir}/lib/base.sh"; _dir="${_dir}"
+  _generate_autoconfig > "${output}"
+  second=$(_generate_autoconfig | sha256sum)
+  [[ "$(sha256sum < "${output}")" == "${second}" ]] || return 1
+  grep -q '_autoconfig.loaded' "${output}" && grep -q 'generated_pref_dump' "${output}" || return 1
+  marker=$(grep -n 'per-webapp overrides' "${output}" | head -1 | cut -d: -f1)
+  app=$(grep -n 'profileDir === ' "${output}" | head -1 | cut -d: -f1)
+  tail=$(grep -n 'if (isWebapp)' "${output}" | head -1 | cut -d: -f1)
+  (( marker < app && app < tail )) || return 1
+  for name in "${_webapps[@]}"; do
+    _is_valid_webapp_name "${name}" || return 1
+    grep -q "profileDir === \"${name}\"" "${output}" || return 1
+    [[ -s "${_dir}/webapp/${name}/prefs.cfg" \
+      && -f "${_dir}/webapp/${name}/${name}.desktop" ]] || return 1
+    grep -q '__LAUNCH_SH__' "${_dir}/webapp/${name}/${name}.desktop" || return 1
+  done
+}
+
+_policy_contract() {
+  python3 - "${_dir}/config/policies.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))["policies"]
+assert p["ExtensionSettings"]["*"]["installation_mode"] == "blocked"
+assert p["ExtensionSettings"]["uBlock0@raymondhill.net"]["installation_mode"] == "force_installed"
+assert p["SSLVersionMin"] == "tls1.2"
+assert p["DisableSafeMode"] and p["DisableMasterPasswordCreation"]
+PY
+}
+
+_desktop_contract() {
+  local root="$1"
+  local home="${root}/home" apps pixmaps standard_home standard_apps name icon hash outside rc=0
+  apps="${home}/.local/share/applications"; pixmaps="${home}/.local/share/pixmaps"
+  mkdir -p "${apps}"
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/deploy.sh"; _dir="${_dir}"
+    HOME="${home}"; XDG_DATA_HOME="${home}/.local/share"
+    _deploy_desktop_entries 'flatpak|/unused|/unused|/unused' >/dev/null
+  )
+  grep -q -- '--target flatpak %u' "${apps}/org.mozilla.firefox.desktop" || return 1
+  for name in "${_webapps[@]}"; do
+    [[ -f "${apps}/org.mozilla.firefox.${name}-web.desktop" ]] || return 1
+    grep -q -- "--target flatpak --webapp ${name}" \
+      "${apps}/org.mozilla.firefox.${name}-web.desktop" || return 1
+  done
+
+  standard_home="${root}/standard-home"; standard_apps="${standard_home}/.local/share/applications"
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/deploy.sh"; _dir="${_dir}"
+    HOME="${standard_home}"; XDG_DATA_HOME="${standard_home}/.local/share"
+    _deploy_desktop_entries 'standard|/unused|/unused|/unused' >/dev/null
+  )
+  grep -q -- '--target standard %u' "${standard_apps}/firefox.desktop" || return 1
+
+  outside="${root}/outside"; mkdir -p "${outside}"
+  printf 'firefox\n' > "${outside}/firefox"; printf 'app\n' > "${outside}/app"; printf 'icon\n' > "${outside}/icon"
+  rm -f "${apps}/org.mozilla.firefox.desktop" "${apps}/org.mozilla.firefox.discord-web.desktop"
+  ln -s "${outside}/firefox" "${apps}/org.mozilla.firefox.desktop"
+  ln -s "${outside}/app" "${apps}/org.mozilla.firefox.discord-web.desktop"
+  hash=$(cksum "${_dir}/webapp/discord/discord.png" | awk '{print $1}')
+  icon="${pixmaps}/discord-${hash}.png"; rm -f "${icon}"; ln -s "${outside}/icon" "${icon}"
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/deploy.sh"; _dir="${_dir}"
+    HOME="${home}"; XDG_DATA_HOME="${home}/.local/share"
+    _deploy_desktop_entries 'flatpak|/unused|/unused|/unused' >/dev/null
+  ) || rc=$?
+  # a pre-existing symlink is replaced by the deployed file, never written through
+  (( rc == 0 )) && grep -qx firefox "${outside}/firefox" \
+    && grep -qx app "${outside}/app" && grep -qx icon "${outside}/icon" \
+    && [[ ! -L "${apps}/org.mozilla.firefox.desktop" && ! -L "${icon}" ]]
+}
+
+_deploy_profile_safety() {
+  local root="$1"
+  local home="${root}/home" pdir profile outside rc=0
+  pdir="${home}/.mozilla/firefox"; profile="${pdir}/main.default"; outside="${root}/outside"
+  mkdir -p "${profile}/chrome" "${pdir}/discord/chrome" "${outside}"
+  printf '[General]\nStartWithLastProfile=0\n' > "${pdir}/profiles.ini"
+  for file in home logo app; do printf '%s\n' "${file}" > "${outside}/${file}"; done
+  # a pre-existing symlink is replaced by the deployed file, never written through
+  ln -s "${outside}/home" "${profile}/chrome/userContent.css"
+  ln -s "${outside}/logo" "${profile}/chrome/hifox.png"
+  ln -s "${outside}/app" "${pdir}/discord/chrome/userChrome.css"
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/deploy.sh"; _dir="${_dir}"
+    _deploy_homepage "${pdir}"; _deploy_webapp_profiles "${pdir}"; _deploy_webapp_profiles "${pdir}"
+  ) >/dev/null 2>&1
+  grep -qx home "${outside}/home" && grep -qx logo "${outside}/logo" \
+    && grep -qx app "${outside}/app" || return 1
+  [[ ! -L "${profile}/chrome/userContent.css" && ! -L "${pdir}/discord/chrome/userChrome.css" ]] || return 1
+  grep -qx 'StartWithLastProfile=1' "${pdir}/profiles.ini" || return 1
+  [[ "$(grep -c '^Name=discord$' "${pdir}/profiles.ini")" == 1 ]] || return 1
+
+  # a profiles.ini declaration pointing outside the profile root stops deploy
+  printf '\n[Profile9]\nIsRelative=0\nPath=%s\n' "${outside}" >> "${pdir}/profiles.ini"
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/clean.sh"; source "${_dir}/lib/deploy.sh"
+    _dir="${_dir}"; HOME="${home}"; _require_firefox() { :; }
+    _active_installations() { printf 'standard|%s|/unused|/unused\n' "${pdir}"; }
+    hifox_deploy
+  ) >/dev/null 2>&1 || rc=$?
+  (( rc != 0 )) && grep -qx home "${outside}/home"
+}
+
+_make_verify_fixture() {
+  local root="$1"
+  local target="${2:-flatpak}" repo="${root}/repo" home="${root}/home" pdir profile poldir sdir
+  pdir="${home}/.mozilla/firefox"; profile="${pdir}/main.default"
+  poldir="${root}/policies"; sdir="${root}/firefox"
+  mkdir -p "${repo}" "${profile}" "${poldir}" "${sdir}/defaults/pref"
+  cp -a "${_dir}/config" "${repo}/config"; cp -a "${_dir}/webapp" "${repo}/webapp"
   cp "${repo}/config/policies.json" "${poldir}/policies.json"
   cp "${repo}/config/autoconfig.js" "${sdir}/defaults/pref/autoconfig.js"
   cp "${repo}/config/user.js" "${profile}/user.js"
-  if [[ -n "${dump}" ]]; then
-    printf '%s\n' "${dump}" > "${profile}/generated_pref_dump.txt"
-  else
-    _fake_runtime_dump > "${profile}/generated_pref_dump.txt"
-  fi
-  _gen_autoconfig_for "${repo}" > "${sdir}/autoconfig.cfg"
+  printf '[Profile0]\nName=main\nIsRelative=1\nPath=main.default\nDefault=1\n' > "${pdir}/profiles.ini"
+  _fake_runtime_dump > "${profile}/generated_pref_dump.txt"
+  REPO="${repo}" SOURCE="${_dir}" bash -c \
+    'source "${SOURCE}/lib/base.sh"; _dir="${REPO}"; _generate_autoconfig' > "${sdir}/autoconfig.cfg"
   printf 'user_pref("_user_js.canary", "hifox");\n' > "${profile}/prefs.js"
-  # prefs.js is newer to simulate restart-after-deploy for verify._older_than_any().
-  touch -t 200001010000 \
-    "${poldir}/policies.json" \
-    "${sdir}/defaults/pref/autoconfig.js" \
-    "${sdir}/autoconfig.cfg" \
-    "${profile}/user.js"
-  touch -t 200001020000 "${profile}/prefs.js"
-
-  printf '%s|%s|%s\n' "${profile}" "${poldir}" "${sdir}"
+  touch -t 200001010000 "${poldir}/policies.json" "${sdir}/defaults/pref/autoconfig.js" \
+    "${sdir}/autoconfig.cfg" "${profile}/user.js"
+  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.${target}.txt"
+  git -C "${repo}" init -q
+  printf '%s|%s|%s|%s|%s\n' "${repo}" "${pdir}" "${profile}" "${poldir}" "${sdir}"
 }
 
-_verify_fixture() {
-  local root="$1"
-  local repo="${root}/repo"
-  local profile poldir sdir
-  _make_verify_repo "${repo}"
-  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
-  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
+_verify_case() {
+  local root="$1" mode="$2" target="${3:-flatpak}" repo pdir profile poldir sdir baseline dump stop_marker calls log
+  local rc=0 before="" expect_stop=false pattern=""
+  IFS='|' read -r repo pdir profile poldir sdir < <(_make_verify_fixture "${root}" "${target}")
+  baseline="${repo}/config/generated_pref_dump.${target}.txt"; dump="${profile}/generated_pref_dump.txt"
+  stop_marker="${root}/stopped"; calls="${root}/calls"; log="${root}/verify.log"
+  case "${mode}" in
+    pass) ;;
+    drift)
+      sed -i 's/^privacy\.fingerprintingProtection = true \[LOCKED\]$/privacy.fingerprintingProtection = false [LOCKED]/' "${dump}"
+      touch -t 203001010000 "${profile}/prefs.js"; expect_stop=true; pattern='fingerprint protection'
+      ;;
+    unlocked)
+      sed -i 's/^dom\.security\.https_only_mode = true \[LOCKED\]$/dom.security.https_only_mode = true/' "${dump}"
+      expect_stop=true; pattern=UNLOCKED
+      ;;
+    missing) rm -f "${dump}"; pattern='awaiting a Firefox restart' ;;
+    malformed) printf 'not a dump\n' > "${dump}"; pattern='MALFORMED EVIDENCE' ;;
+    oversized) head -c 8388609 /dev/zero > "${dump}"; pattern='MALFORMED EVIDENCE' ;;
+    symlink) mv "${dump}" "${root}/outside-dump"; ln -s "${root}/outside-dump" "${dump}"; pattern='MALFORMED EVIDENCE' ;;
+    producer) printf 'producer failed\n' > "${profile}/generated_pref_dump.err"; pattern='DUMP FAILED' ;;
+    staged) touch -t 203001010000 "${sdir}/autoconfig.cfg"; pattern='awaiting a Firefox restart' ;;
+    no-profile) rm -rf "${pdir}"; pattern='runtime checks not applicable' ;;
+    file-drift) rm -rf "${pdir}"; printf '\n' >> "${poldir}/policies.json"; expect_stop=true; pattern='DRIFT: policies.json' ;;
+    unsafe-default)
+      mkdir -p "${root}/external.default"
+      printf '[Profile0]\nIsRelative=0\nPath=%s\nDefault=1\n' "${root}/external.default" > "${pdir}/profiles.ini"
+      pattern='UNSAFE/UNRESOLVED PROFILE DECLARATION'
+      ;;
+    baseline-dirty)
+      printf 'operator.note = keep\n' >> "${baseline}"; git -C "${repo}" add config/generated_pref_dump.flatpak.txt
+      printf 'runtime.new = true\n' >> "${dump}"; pattern='uncommitted changes - preserved'
+      ;;
+    git-fail) printf 'runtime.new = true\n' >> "${dump}"; pattern='cannot be proven - preserved' ;;
+    baseline-accept)
+      git -C "${repo}" add -A && git -C "${repo}" -c user.email=t@t -c user.name=t commit -qm base
+      printf 'runtime.new = true [LOCKED]\n' >> "${dump}"
+      ;;
+    compare-error) pattern='UNREADABLE: policies.json comparison' ;;
+    reader-error) pattern='UNSAFE/UNRESOLVED PROFILE DECLARATION' ;;
+    no-install) pattern='cannot determine active Firefox installation' ;;
+    baseline-missing) rm -f "${baseline}" ;;
+    webapp-na) mkdir -p "${pdir}/discord"; pattern='not yet initialized' ;;
+    webapp-missing)
+      mkdir -p "${pdir}/discord"; printf 'user_pref("x", 1);\n' > "${pdir}/discord/prefs.js"
+      pattern='awaiting a Firefox restart - discord'
+      ;;
+    webapp-pass|webapp-error|webapp-drift)
+      mkdir -p "${pdir}/discord"; cp "${repo}/config/user.js" "${pdir}/discord/user.js"
+      printf 'user_pref("_user_js.canary", "hifox");\n' > "${pdir}/discord/prefs.js"
+      _fake_webapp_dump discord > "${pdir}/discord/generated_pref_dump.txt"
+      touch -t 200001010000 "${pdir}/discord/user.js"
+      if [[ "${mode}" == webapp-error ]]; then
+        printf 'producer failed\n' > "${pdir}/discord/generated_pref_dump.err"; pattern='DUMP FAILED: discord'
+      elif [[ "${mode}" == webapp-drift ]]; then
+        sed -i 's/^geo\.enabled = false \[LOCKED\]$/geo.enabled = true [LOCKED]/' \
+          "${pdir}/discord/generated_pref_dump.txt"
+        expect_stop=true; pattern='discord: geolocation disabled'
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  [[ ! -e "${baseline}" ]] || before=$(sha256sum "${baseline}")
 
   (
-    verify_repo="${repo}"
-    verify_root="${root}/flatpak"
-    verify_profile="${profile}"
-    verify_poldir="${poldir}"
-    verify_sdir="${sdir}"
-    source "${_dir}/lib/base.sh"
-    source "${_dir}/lib/deploy.sh"
-    source "${_dir}/lib/verify.sh"
-    _dir="${verify_repo}"
-    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
-    _find_profile() { printf '%s\n' "${verify_profile}"; }
-    _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
-    _kill_firefox() { :; }
-    notify-send() { :; }
-    _hifox_verify
-  )
-}
-
-_verify_rejects_pref_drift() {
-  local root="$1"
-  local repo="${root}/repo"
-  local profile poldir sdir
-  _make_verify_repo "${repo}"
-  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
-  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
-  sed -i \
-    -e 's/^privacy\.fingerprintingProtection = true \[LOCKED\]$/privacy.fingerprintingProtection = false [LOCKED]/' \
-    -e 's/^privacy\.resistFingerprinting = false \[LOCKED\]$/privacy.resistFingerprinting = true [LOCKED]/' \
-    "${profile}/generated_pref_dump.txt"
-  touch -t 200001020001 "${profile}/prefs.js"
-
-  (
-    verify_repo="${repo}"
-    verify_root="${root}/flatpak"
-    verify_profile="${profile}"
-    verify_poldir="${poldir}"
-    verify_sdir="${sdir}"
-    source "${_dir}/lib/base.sh"
-    source "${_dir}/lib/deploy.sh"
-    source "${_dir}/lib/verify.sh"
-    _dir="${verify_repo}"
-    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
-    _find_profile() { printf '%s\n' "${verify_profile}"; }
-    _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
-    _kill_firefox() { :; }
-    notify-send() { :; }
-    _hifox_verify
-  ) > "${root}/verify.out" 2>&1
-  local rc=$?
-  if (( rc == 0 )); then
-    cat "${root}/verify.out"
-    return 1
-  fi
-}
-
-_verify_rejects_unlocked_pref() {
-  local root="$1"
-  local repo="${root}/repo"
-  local profile poldir sdir
-  _make_verify_repo "${repo}"
-  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
-  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
-  sed -i 's/^dom\.security\.https_only_mode = true \[LOCKED\]$/dom.security.https_only_mode = true/' \
-    "${profile}/generated_pref_dump.txt"
-
-  (
-    verify_repo="${repo}"
-    verify_root="${root}/flatpak"
-    verify_profile="${profile}"
-    verify_poldir="${poldir}"
-    verify_sdir="${sdir}"
-    source "${_dir}/lib/base.sh"
-    source "${_dir}/lib/deploy.sh"
-    source "${_dir}/lib/verify.sh"
-    _dir="${verify_repo}"
-    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
-    _find_profile() { printf '%s\n' "${verify_profile}"; }
-    _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
-    _kill_firefox() { :; }
-    notify-send() { :; }
-    _hifox_verify
-  ) > "${root}/verify.out" 2>&1
-  local rc=$?
-  if (( rc == 0 )); then
-    cat "${root}/verify.out"
-    return 1
-  fi
-  grep -q 'UNLOCKED' "${root}/verify.out"
-}
-
-_verify_flags_missing_webapp_dump() {
-  local root="$1"
-  local repo="${root}/repo"
-  local profile poldir sdir
-  _make_verify_repo "${repo}"
-  IFS='|' read -r profile poldir sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}")
-  cp "${profile}/generated_pref_dump.txt" "${repo}/config/generated_pref_dump.flatpak.txt"
-  mkdir -p "${root}/flatpak/discord"
-  printf 'user_pref("x", 1);\n' > "${root}/flatpak/discord/prefs.js"
-
-  (
-    verify_repo="${repo}"
-    verify_root="${root}/flatpak"
-    verify_profile="${profile}"
-    verify_poldir="${poldir}"
-    verify_sdir="${sdir}"
-    source "${_dir}/lib/base.sh"
-    source "${_dir}/lib/deploy.sh"
-    source "${_dir}/lib/verify.sh"
-    _dir="${verify_repo}"
-    _active_installations() { printf 'flatpak|%s|%s|%s\n' "${verify_root}" "${verify_poldir}" "${verify_sdir}"; }
-    _find_profile() { printf '%s\n' "${verify_profile}"; }
-    _all_profile_paths() { printf '%s\n' "${verify_profile}"; }
-    _kill_firefox() { :; }
-    notify-send() { :; }
-    _hifox_verify
-  ) > "${root}/verify.out" 2>&1
-  local rc=$?
-  if (( rc == 0 )); then
-    cat "${root}/verify.out"
-    return 1
-  fi
-  grep -q 'discord: pref dump' "${root}/verify.out"
-}
-
-_verify_writes_per_target_dumps() {
-  local root="$1"
-  local repo="${root}/repo"
-  local f_profile f_poldir f_sdir s_profile s_poldir s_sdir
-  _make_verify_repo "${repo}"
-  IFS='|' read -r f_profile f_poldir f_sdir < <(_make_verify_fixture "${root}/flatpak" "${repo}" "target = flatpak")
-  IFS='|' read -r s_profile s_poldir s_sdir < <(_make_verify_fixture "${root}/standard" "${repo}" "target = standard")
-  rm -f \
-    "${repo}/config/generated_pref_dump.txt" \
-    "${repo}/config/generated_pref_dump.flatpak.txt" \
-    "${repo}/config/generated_pref_dump.standard.txt"
-
-  (
-    verify_repo="${repo}"
-    verify_f_root="${root}/flatpak"
-    verify_s_root="${root}/standard"
-    verify_f_profile="${f_profile}"
-    verify_s_profile="${s_profile}"
-    verify_f_poldir="${f_poldir}"
-    verify_s_poldir="${s_poldir}"
-    verify_f_sdir="${f_sdir}"
-    verify_s_sdir="${s_sdir}"
-    source "${_dir}/lib/base.sh"
-    source "${_dir}/lib/deploy.sh"
-    source "${_dir}/lib/verify.sh"
-    _dir="${verify_repo}"
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/deploy.sh"; source "${_dir}/lib/verify.sh"
+    _dir="${repo}"; HOME="${root}/home"
     _active_installations() {
-      printf 'flatpak|%s|%s|%s\n' "${verify_f_root}" "${verify_f_poldir}" "${verify_f_sdir}"
-      printf 'standard|%s|%s|%s\n' "${verify_s_root}" "${verify_s_poldir}" "${verify_s_sdir}"
+      [[ "${mode}" != no-install ]] || return 1
+      printf 'x\n' >> "${calls}"; printf '%s|%s|%s|%s\n' "${target}" "${pdir}" "${poldir}" "${sdir}"
     }
-    _find_profile() {
+    _stop_firefox() { : > "${stop_marker}"; }; _wait_firefox_stopped() { :; }; notify-send() { :; }
+    if [[ "${mode}" == git-fail ]]; then git() { return 1; }; fi
+    if [[ "${mode}" == compare-error ]]; then
+      cmp() { local arg; for arg in "$@"; do [[ "${arg}" != "${repo}/config/policies.json" ]] || return 2; done; command cmp "$@"; }
+    fi
+    if [[ "${mode}" == reader-error ]]; then
+      awk() { local arg; for arg in "$@"; do [[ "${arg}" != "${pdir}/profiles.ini" ]] || return 1; done; command awk "$@"; }
+    fi
+    _hifox_verify
+  ) > "${log}" 2>&1 || rc=$?
+
+  if [[ "${mode}" == no-install ]]; then [[ ! -e "${calls}" ]] || return 1
+  else [[ "$(wc -l < "${calls}")" == 1 ]] || return 1; fi
+  case "${mode}" in
+    pass|no-profile|baseline-missing|baseline-accept|baseline-dirty|git-fail|webapp-na|webapp-pass|missing|staged|webapp-missing)
+      (( rc == 0 )) ;;
+    *) (( rc != 0 )) ;;
+  esac || return 1
+  if ${expect_stop}; then [[ -e "${stop_marker}" ]] || return 1; else [[ ! -e "${stop_marker}" ]] || return 1; fi
+  [[ -z "${pattern}" ]] || grep -q "${pattern}" "${log}" || return 1
+  case "${mode}" in
+    baseline-missing|baseline-accept) cmp -s "${dump}" "${baseline}" ;;
+    *) [[ "${before}" == "$(sha256sum "${baseline}")" ]] ;;
+  esac
+}
+
+_verify_atomic_contract() {
+  local root="$1" source_file replacement snapshot src baseline rc=0
+  mkdir -p "${root}"; source "${_dir}/lib/verify.sh"; _dir="${root}"
+  source_file="${root}/source"; replacement="${root}/replacement"; snapshot="${root}/snapshot"
+  printf 'first.pref = true [LOCKED]\n' > "${source_file}"; printf 'second.pref = false [LOCKED]\n' > "${replacement}"
+  head() { command head "$@"; mv -f "${replacement}" "${source_file}"; }
+  ! _verify_snapshot_dump "${source_file}" "${snapshot}" || return 1; unset -f head
+
+  # a baseline the operator changed must never be overwritten; a clean one must be
+  src="${root}/runtime"; baseline="${root}/config.txt"; printf 'new\n' > "${src}"
+  git -C "${root}" init -q; printf 'operator\n' > "${baseline}"
+  rc=0; _verify_baseline_writable "${baseline}" || rc=$?
+  (( rc == 1 )) || return 1
+  git -C "${root}" add -A && git -C "${root}" -c user.email=t@t -c user.name=t commit -qm base
+  _verify_baseline_writable "${baseline}" || return 1
+  _verify_write_baseline "${src}" "${baseline}" || return 1
+  cmp -s "${src}" "${baseline}" && [[ -z "$(find "${root}" -name 'config.txt.tmp.*')" ]]
+}
+
+_clean_case() {
+  local root="$1" mode="$2"
+  local home="${root}/home" pdir profile evidence rc=0
+  pdir="${home}/.mozilla/firefox"; profile="${pdir}/main.default"
+  mkdir -p "${profile}/datareporting/archived"
+  evidence="${profile}/datareporting/archived/canary"; printf 'preserve\n' > "${evidence}"
+  printf '[Profile0]\nIsRelative=1\nPath=main.default\nDefault=1\n' > "${pdir}/profiles.ini"
+  case "${mode}" in
+    pass|running) ;;
+    external)
+      mkdir -p "${root}/external.default"
+      printf '\n[Profile1]\nIsRelative=0\nPath=%s\n' "${root}/external.default" >> "${pdir}/profiles.ini"
+      ;;
+    root-symlink) mkdir -p "${root}/outside"; mv "${pdir}" "${root}/outside/firefox"; ln -s "${root}/outside/firefox" "${pdir}" ;;
+    ini-dangling|ini-directory|ini-fifo)
+      rm -f "${pdir}/profiles.ini"
+      case "${mode}" in
+        ini-dangling) ln -s "${root}/missing.ini" "${pdir}/profiles.ini" ;;
+        ini-directory) mkdir "${pdir}/profiles.ini" ;;
+        ini-fifo) mkfifo "${pdir}/profiles.ini" ;;
+      esac
+      ;;
+    alias)
+      mkdir -p "${profile}/chrome/archived"; mv "${evidence}" "${profile}/chrome/archived/canary"
+      rm -rf "${profile}/datareporting"; ln -s "${profile}/chrome" "${profile}/datareporting"
+      evidence="${profile}/chrome/archived/canary"
+      ;;
+    dangling-remnant) rm -rf "${profile}/datareporting"; ln -s "${root}/missing" "${profile}/suggest.sqlite" ;;
+    *) return 1 ;;
+  esac
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/clean.sh"; _dir="${_dir}"; HOME="${home}"
+    _require_firefox() { :; }; _active_installations() { printf 'standard|%s|/unused|/selected\n' "${pdir}"; }
+    if [[ "${mode}" == running ]]; then _firefox_running() { return 0; }; else _firefox_running() { return 1; }; fi
+    hifox_clean >/dev/null
+  ) 2>/dev/null || rc=$?
+  case "${mode}" in
+    pass) (( rc == 0 )) && [[ ! -e "${evidence}" ]] ;;
+    # a nested remnant is never deleted through a symlinked parent directory
+    alias) (( rc != 0 )) && grep -qx preserve "${evidence}" ;;
+    # a top-level remnant is unlinked directly: rm does not follow the last component
+    dangling-remnant) (( rc == 0 )) && [[ ! -L "${profile}/suggest.sqlite" ]] ;;
+    *) (( rc != 0 )) && grep -qx preserve "${evidence}" ;;
+  esac
+}
+
+_systemconfig_case() {
+  local root="$1" mode="$2"
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/deploy.sh"; source "${_dir}/lib/systemconfig.sh"
+    _dir="${_dir}"; HOME="${root}/home"; XDG_DATA_HOME="${root}/data"; mkdir -p "${HOME}"
+    _can_sudo_chattr() { return 1; }
+    timeout() { [[ "$1" == -k && "$2" == 2s && "$3" == 15s ]] || return 1; shift 3; "$@"; }
+    flatpak() {
       case "$1" in
-        "${verify_f_root}") printf '%s\n' "${verify_f_profile}" ;;
-        "${verify_s_root}") printf '%s\n' "${verify_s_profile}" ;;
+        info) printf 'app/org.mozilla.firefox/x86_64/beta\n' ;;
+        run)
+          [[ "${mode}" == visible ]] || return 1
+          local path="${*: -1}"
+          cat "${XDG_DATA_HOME}/flatpak/extension/org.mozilla.firefox.systemconfig/x86_64/beta/${path#/app/etc/firefox/}"
+          ;;
         *) return 1 ;;
       esac
     }
-    _all_profile_paths() { _find_profile "$1"; }
-    _kill_firefox() { :; }
-    notify-send() { :; }
-    _hifox_verify
+    hifox_install_systemconfig >/dev/null
   )
+}
 
-  grep -qx 'target = flatpak' "${repo}/config/generated_pref_dump.flatpak.txt" \
-    && grep -qx 'target = standard' "${repo}/config/generated_pref_dump.standard.txt" \
-    && [[ ! -e "${repo}/config/generated_pref_dump.txt" ]]
+_flatpak_contract() {
+  local root="$1" mode=good out
+  source "${_dir}/lib/base.sh"; HOME="${root}/home"; XDG_DATA_HOME="${root}/data"
+  flatpak() { [[ "$1" == info ]] || return 1; [[ "${mode}" == good ]] && printf 'app/org.mozilla.firefox/aarch64/beta\n' || printf 'bad-ref\n'; }
+  out=$(_list_installations 2>/dev/null)
+  grep -Fq '/org.mozilla.firefox.systemconfig/aarch64/beta/policies|' <<< "${out}" || return 1
+  mkdir -p "${root}/standard"; : > "${root}/standard/application.ini"; HIFOX_FIREFOX_DIR="${root}/standard"; mode=bad
+  out=$(_list_installations 2>/dev/null); [[ "${out}" == standard* ]] || return 1
+  flatpak() { [[ "$1" != ps ]]; }; ! _stop_firefox flatpak /unused
+}
+
+_watch_contract() {
+  local root="$1"
+  local repo="${root}/repo" home="${root}/home" unit
+  unit="${home}/.config/systemd/user/hifox-watch.path"
+  mkdir -p "${repo}"; cp -a "${_dir}/config" "${repo}/config"; cp -a "${_dir}/webapp" "${repo}/webapp"
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/watch.sh"; _dir="${repo}"; HOME="${home}"; XDG_CONFIG_HOME="${home}/.config"
+    _require_firefox() { :; }; _active_installations() { printf 'flatpak|%s|/unused|/unused\n' "${root}/profiles"; }
+    systemctl() { return 0; }; hifox_watch_install >/dev/null
+  )
+  # a reviewed baseline written by verify must not re-trigger deploy
+  [[ -f "${unit}" ]] && ! grep -q generated_pref_dump "${unit}" || return 1
+  grep -q 'profiles.ini' "${unit}" || return 1
+  (
+    source "${_dir}/lib/base.sh"; source "${_dir}/lib/purge.sh"
+    _purge_restore_armed=true; _purge_watch_units=(hifox-verify.path); calls="${root}/calls"
+    systemctl() { printf '%s\n' "$*" >> "${calls}"; [[ "$*" != *is-active* ]] || printf 'active\n'; }
+    _purge_restore_watchers >/dev/null
+    grep -qx -- '--user start hifox-verify.path' "${calls}"
+  )
+}
+
+_status_contract() {
+  local root="$1"
+  local home="${root}/home" pdir profile mode out
+  pdir="${home}/.mozilla/firefox"; profile="${pdir}/main.default"
+  mkdir -p "${profile}/chrome" "${home}/.config/hifox"
+  cp "${_dir}/config/user.js" "${profile}/user.js"; cp "${_dir}/config/hifox.css" "${profile}/chrome/userContent.css"
+  cp "${_dir}/docs/hifox.png" "${profile}/chrome/hifox.png"
+  printf '[Profile0]\nIsRelative=1\nPath=main.default\nDefault=1\n' > "${pdir}/profiles.ini"
+  printf 'standard\n' > "${home}/.config/hifox/target"
+  for mode in clean drift; do
+    [[ "${mode}" == clean ]] || printf '/* drift */\n' >> "${profile}/chrome/userContent.css"
+    out=$(HOME="${home}" XDG_CONFIG_HOME="${home}/.config" SOURCE="${_dir}" PDIR="${pdir}" bash -c '
+      source "${SOURCE}/lib/base.sh"; source "${SOURCE}/lib/status.sh"; _dir="${SOURCE}"
+      _active_installations() { printf "standard|%s|/unused|/unused\n" "${PDIR}"; }; hifox_status 2>&1')
+    if [[ "${mode}" == clean ]]; then grep -q 'main.default.*synced' <<< "${out}" || return 1
+    else grep -q 'DRIFT userContent' <<< "${out}" || return 1; fi
+  done
+}
+
+_source_contract() {
+  grep -q '@mozilla.org/network/safe-file-output-stream;1' "${_dir}/config/generate_pref_dump.cfg" || return 1
+  grep -q 'flock -w 15' "${_dir}/hifox.sh" || return 1
+  source "${_dir}/lib/verify.sh"
+  _verify_dump_valid "${_dir}/config/generated_pref_dump.standard.txt"
+  _verify_dump_valid "${_dir}/config/generated_pref_dump.flatpak.txt"
+  local fn count
+  local -a funcs=()
+  mapfile -t funcs < <(grep -hE '^[A-Za-z_][A-Za-z0-9_]*\(\)' "${_sh[@]}" | sed -E 's/\(\).*//' | sort -u)
+  for fn in "${funcs[@]}"; do
+    count=$(grep -hE "(^|[^A-Za-z0-9_])${fn}([^A-Za-z0-9_]|$)" "${_sh[@]}" | wc -l)
+    (( count > 1 )) || { printf '%s\n' "${fn}"; return 1; }
+  done
 }
 
 _tmpdir=$(mktemp -d)
 trap 'rm -rf "${_tmpdir}"' EXIT
-
 mapfile -t _sh < <(printf '%s\n' "${_dir}/hifox.sh" "${_dir}/launch.sh" "${_dir}"/lib/*.sh)
+mapfile -t _webapps < <(for d in "${_dir}"/webapp/*/; do n=$(basename "${d}"); [[ "${n}" == shared ]] || printf '%s\n' "${n}"; done)
 
-mapfile -t _webapps < <(
-  for d in "${_dir}/webapp"/*/; do
-    [[ -d "${d}" ]] || continue
-    wn=$(basename "${d}")
-    [[ "${wn}" == "shared" ]] && continue
-    printf '%s\n' "${wn}"
-  done
-)
-
-echo ""
-echo "=== syntax ==="
-for f in "${_sh[@]}"; do
-  _test "bash -n ${f#${_dir}/}" bash -n "${f}"
-done
-
-echo ""
-echo "=== shellcheck ==="
+_section syntax
+_test "all shell sources parse" bash -c 'for f; do bash -n "$f" || exit; done' _ "${_sh[@]}"
 if command -v shellcheck &>/dev/null; then
-  for f in "${_sh[@]}"; do
-    # hifox.sh sources its lib/ siblings; -x follows them
-    if [[ "${f##*/}" == "hifox.sh" ]]; then
-      _test "shellcheck ${f#${_dir}/}" shellcheck -x "${f}"
-    else
-      _test "shellcheck ${f#${_dir}/}" shellcheck "${f}"
-    fi
-  done
+  _test "shellcheck" shellcheck -x "${_sh[@]}"
 else
   echo "  SKIP  shellcheck not installed"
 fi
 
-echo ""
-echo "=== usage / dispatch ==="
-_test_fail "no args"            bash "${_dir}/hifox.sh"
-_test_fail "bad command"        bash "${_dir}/hifox.sh" badcmd
-_test_fail "deploy with arg"    bash "${_dir}/hifox.sh" deploy extra
-_test_fail "install no flag"    bash "${_dir}/hifox.sh" install
-_test_fail "install bad flag"   bash "${_dir}/hifox.sh" install --garbage
-_test_fail "purge bad flag"     bash "${_dir}/hifox.sh" purge --garbage
-_test_fail "watch no sub"       bash "${_dir}/hifox.sh" watch
-_test_fail "watch bad sub"      bash "${_dir}/hifox.sh" watch evil
-_test_fail "install-systemconfig with arg" bash "${_dir}/hifox.sh" install-systemconfig extra
-_test_fail "launch.sh rejects bad --target" bash "${_dir}/launch.sh" --target garbage
+_section interfaces
+_test "CLI grammar, names, and target state" _cli_contract
+_test "profile discovery and containment" _profile_contract "${_tmpdir}/profiles"
+_test "autoconfig and auto-discovered webapps" _autoconfig_contract "${_tmpdir}/autoconfig.cfg"
+_test "policy invariants" _policy_contract
+_test "desktop generation replaces symlinked entries" _desktop_contract "${_tmpdir}/desktop"
+_test "profile deployment containment" _deploy_profile_safety "${_tmpdir}/deploy"
 
-for cmd in install deploy verify clean purge status logs watch install-systemconfig; do
-  _test "usage lists: ${cmd}" bash -c "bash '${_dir}/hifox.sh' 2>&1 | grep -qE ' ${cmd}( |$)'"
-done
-
-echo ""
-echo "=== webapp name validation (_is_valid_webapp_name) ==="
-for n in app web-app web_app org.example a; do
-  _test "accept: ${n}" _validate "${n}"
-done
-for n in '' 'evil;cmd' 'foo/bar' 'a b' 'a$b' 'foo|bar'; do
-  _test_fail "reject: ${n:-<empty>}" _validate "${n}"
-done
-
-echo ""
-echo "=== launcher name guard (rejects dot-prefix too) ==="
-for n in app web-app web.app a; do
-  _test "accept: ${n}" _launcher_check "${n}"
-done
-for n in '' .bad ../etc 'evil;cmd' 'foo/bar' .; do
-  _test_fail "reject: ${n:-<empty>}" _launcher_check "${n}"
-done
-
-echo ""
-echo "=== target persistence ==="
-_test "save+read round-trip"   _with_xdg "${_tmpdir}/x1" "_save_target flatpak;  [[ \$(_read_target) == flatpak ]]"
-_test "persists standard"      _with_xdg "${_tmpdir}/x2" "_save_target standard; [[ \$(_read_target) == standard ]]"
-_test "default empty"          _with_xdg "${_tmpdir}/x3" "[[ -z \$(_read_target) ]]"
-_test "overwrite previous"     _with_xdg "${_tmpdir}/x4" "_save_target flatpak; _save_target standard; [[ \$(_read_target) == standard ]]"
-
-echo ""
-echo "=== profile detection ==="
-_p_inst="${_tmpdir}/p_inst"
-_make_pdir "${_p_inst}" "[Install4F96D1932A9F858E]
-Default=abcd1234.default-release
-Locked=1
-
-[Profile1]
-Name=default
-IsRelative=1
-Path=wxyz5678.default
-Default=1
-
-[Profile0]
-Name=default-release
-IsRelative=1
-Path=abcd1234.default-release
-" abcd1234.default-release wxyz5678.default
-_test "Install section preferred"  _in_base "[[ \$(_find_profile '${_p_inst}') == '${_p_inst}/abcd1234.default-release' ]]"
-
-_p_def="${_tmpdir}/p_def"
-_make_pdir "${_p_def}" "[Profile0]
-Name=default
-IsRelative=1
-Path=efgh.default
-Default=1
-" efgh.default
-_test "Default=1 picked when no Install" _in_base "[[ \$(_find_profile '${_p_def}') == '${_p_def}/efgh.default' ]]"
-
-_p_orph="${_tmpdir}/p_orph"
-_make_pdir "${_p_orph}" "[InstallDEAD]
-Default=missing.profile
-Locked=1
-
-[Profile0]
-Name=default
-IsRelative=1
-Path=real.default
-Default=1
-" real.default
-_test "orphan Install falls through" _in_base "[[ \$(_find_profile '${_p_orph}') == '${_p_orph}/real.default' ]]"
-
-_p_abs="${_tmpdir}/p_abs"
-mkdir -p "${_p_abs}" "${_tmpdir}/abs-profile"
-cat > "${_p_abs}/profiles.ini" << EOF
-[Profile0]
-Name=default
-IsRelative=0
-Path=${_tmpdir}/abs-profile
-Default=1
+_section verification
+while IFS='|' read -r mode label; do
+  _test "${label}" _verify_case "${_tmpdir}/verify-${mode}" "${mode}"
+done <<'EOF'
+pass|accepts current deployed state
+drift|fresh runtime drift stops selected target
+unlocked|unlocked critical pref stops selected target
+missing|missing evidence is pending, not failure
+malformed|malformed evidence does not stop target
+oversized|oversized evidence is bounded
+symlink|symlink evidence is unavailable
+producer|producer error is unavailable
+staged|staged deployment is pending, not failure
+no-profile|deployed files pass without a profile
+file-drift|deployed drift is enforced without a profile
+unsafe-default|unsafe profile declaration is unavailable
+baseline-dirty|operator baseline is preserved
+git-fail|unknown baseline state is preserved
+compare-error|comparison failure is unavailable
+reader-error|profile reader failure is unavailable
+no-install|installation discovery failure does not stop a target
+baseline-missing|missing baseline is published atomically
+baseline-accept|clean baseline accepts new runtime prefs
+webapp-na|uninitialized webapp is not applicable
+webapp-missing|initialized webapp without evidence is pending
+webapp-pass|webapp overrides compose with global checks
+webapp-error|webapp producer error does not stop target
+webapp-drift|webapp global drift stops selected target
 EOF
-_test "IsRelative=0 absolute path" _in_base "[[ \$(_find_profile '${_p_abs}') == '${_tmpdir}/abs-profile' ]]"
+_test "standard target publishes its own baseline" \
+  _verify_case "${_tmpdir}/verify-standard" baseline-missing standard
+_test "snapshot and baseline write discipline" _verify_atomic_contract "${_tmpdir}/atomic"
 
-_p_glob="${_tmpdir}/p_glob"
-mkdir -p "${_p_glob}/zzzz.default-release"
-_test "glob fallback no ini"       _in_base "[[ \$(_find_profile '${_p_glob}') == '${_p_glob}/zzzz.default-release' ]]"
-
-_test_fail "fails on missing dir"  _in_base "_find_profile '${_tmpdir}/no-such'"
-
-echo ""
-echo "=== adversarial profile inputs ==="
-_p_sym="${_tmpdir}/p_sym"
-mkdir -p "${_p_sym}"
-_outside="${_tmpdir}/outside-file"
-: > "${_outside}"
-ln -sf "${_outside}" "${_p_sym}/evil.default-release"
-cat > "${_p_sym}/profiles.ini" << 'EOF'
-[Profile0]
-Name=default
-IsRelative=1
-Path=evil.default-release
-Default=1
-EOF
-_test_fail "_find_profile rejects symlink-to-file" _in_base "_find_profile '${_p_sym}'"
-
-_p_emp="${_tmpdir}/p_emp"
-mkdir -p "${_p_emp}"
-: > "${_p_emp}/profiles.ini"
-_test_fail "_find_profile fails on empty ini" _in_base "_find_profile '${_p_emp}'"
-
-echo ""
-echo "=== profile enumeration ==="
-_p_lp="${_tmpdir}/p_lp"
-_make_pdir "${_p_lp}" "[Profile0]
-Name=default
-IsRelative=1
-Path=aaa.default
-Default=1
-
-[Profile1]
-Name=app-one
-IsRelative=1
-Path=bbb.app-one
-
-[Profile2]
-Name=app-two
-IsRelative=1
-Path=ccc.app-two
-" aaa.default bbb.app-one ccc.app-two
-_test "emits all 3 profiles"   _in_base "(( \$(_list_profile_paths '${_p_lp}' | wc -l) == 3 ))"
-_test "emits absolute paths"   _in_base "_list_profile_paths '${_p_lp}' | grep -qx '${_p_lp}/aaa.default'"
-_test "includes extra profile" _in_base "_list_profile_paths '${_p_lp}' | grep -qx '${_p_lp}/bbb.app-one'"
-
-_p_adv="${_tmpdir}/p_adv"
-_make_pdir "${_p_adv}" "[Profile0]
-Name=ok
-IsRelative=1
-Path=ok.profile
-
-[Profile1]
-Name=evil-prefix
-IsRelative=1
-Path=../../etc
-
-[Profile2]
-Name=evil-external
-IsRelative=0
-Path=/etc
-
-[Profile3]
-Name=evil-middle
-IsRelative=1
-Path=foo/../bar
-" ok.profile
-_test "skips ../-prefix path"        _in_base "! _list_profile_paths '${_p_adv}' | grep -q '\\.\\.'"
-_test "skips IsRelative=0 to /etc"   _in_base "! _list_profile_paths '${_p_adv}' | grep -qx /etc"
-_test "skips foo/../bar middle"      _in_base "! _list_profile_paths '${_p_adv}' | grep -q '/foo/'"
-_test "still emits good entries"     _in_base "_list_profile_paths '${_p_adv}' | grep -qx '${_p_adv}/ok.profile'"
-
-_test_fail "fails when ini missing"  _in_base "_list_profile_paths '${_tmpdir}/no-such'"
-
-_p_ap="${_tmpdir}/p_ap"
-mkdir -p "${_p_ap}/aaa.default-release"
-_test "_all_profile_paths glob fallback" _in_base "[[ \$(_all_profile_paths '${_p_ap}') == '${_p_ap}/aaa.default-release' ]]"
-
-echo ""
-echo "=== autoconfig generation ==="
-_ac_grep "base lockPref present"        '_autoconfig.loaded'
-_ac_grep "fingerprint protection lock"  'privacy.fingerprintingProtection'
-_ac_grep "webapp marker"                'per-webapp overrides'
-_ac_grep "pref dump tail appended"      'generated_pref_dump'
-
-if (( ${#_webapps[@]} > 0 )); then
-  _test "ordering: marker < first webapp < shared tail" _in_base "
-    out=\$(_generate_autoconfig)
-    m=\$(printf '%s\n' \"\${out}\" | grep -n 'per-webapp overrides' | head -1 | cut -d: -f1)
-    d=\$(printf '%s\n' \"\${out}\" | grep -n 'profileDir === ' | head -1 | cut -d: -f1)
-    s=\$(printf '%s\n' \"\${out}\" | grep -n 'if (isWebapp)' | head -1 | cut -d: -f1)
-    (( m < d && d < s ))
-  "
-fi
-
-_test "deterministic across runs" _in_base "
-  a=\$(_generate_autoconfig | sha256sum)
-  b=\$(_generate_autoconfig | sha256sum)
-  [[ \"\${a}\" == \"\${b}\" ]]
-"
-
-_test "validates webapp names before injection" \
-  bash -c "awk '/_generate_autoconfig\\(\\)/,/^}$/' '${_dir}/lib/base.sh' | grep -q '_is_valid_webapp_name'"
-
-echo ""
-echo "=== webapps (auto-discovered) ==="
-declare -A _wpass _wfail
-_wtrack() {
-  local wn="$1"; shift
-  local b_p=${_pass} b_f=${_fail}
-  "$@"
-  if (( _pass > b_p )); then ((_wpass[${wn}]++)) || true; fi
-  if (( _fail > b_f )); then ((_wfail[${wn}]++)) || true; fi
-}
-for _wn in "${_webapps[@]}"; do
-  _w="${_dir}/webapp/${_wn}"
-  _wpass[${_wn}]=0
-  _wfail[${_wn}]=0
-  _wtrack "${_wn}" _ac_grep "${_wn}: injected into autoconfig" "profileDir === \"${_wn}\""
-  _wtrack "${_wn}" _test "${_wn}: prefs.cfg present"           test -s "${_w}/prefs.cfg"
-  _wtrack "${_wn}" _test "${_wn}: .desktop present"            test -f "${_w}/${_wn}.desktop"
-  _wtrack "${_wn}" _test "${_wn}: .desktop has __LAUNCH_SH__"  grep -q '__LAUNCH_SH__' "${_w}/${_wn}.desktop"
-  _wtrack "${_wn}" _test "${_wn}: name passes validation"      _validate "${_wn}"
+_section mutation
+for mode in pass running external root-symlink ini-dangling ini-directory ini-fifo alias dangling-remnant; do
+  _test "clean: ${mode}" _clean_case "${_tmpdir}/clean-${mode}" "${mode}"
 done
+_test "Flatpak branch and process-state semantics" _flatpak_contract "${_tmpdir}/flatpak"
+_test "systemconfig is visible inside sandbox" _systemconfig_case "${_tmpdir}/systemconfig-pass" visible
+_test_fail "systemconfig rejects host-only publication" _systemconfig_case "${_tmpdir}/systemconfig-fail" hidden
+_test "watch publication and exact recovery" _watch_contract "${_tmpdir}/watch"
 
-echo ""
-echo "=== .desktop generation (single-target shadow) ==="
+_section consistency
+_test "status distinguishes sync from drift" _status_contract "${_tmpdir}/status"
+_test "runtime dump, lock, and source invariants" _source_contract
 
-_dt_home="${_tmpdir}/desktop_home"
-_dapp="${_dt_home}/.local/share/applications"
-
-_dt_run() {
-  local target="$1"
-  rm -rf "${_dt_home}"
-  mkdir -p "${_dapp}"
-  HOME="${_dt_home}" XDG_DATA_HOME="${_dt_home}/.local/share" \
-    _DT_DIR="${_dir}" _DT_TARGET="${target}" \
-    bash -c '
-      set -e
-      source "${_DT_DIR}/lib/base.sh"
-      source "${_DT_DIR}/lib/deploy.sh"
-      _dir="${_DT_DIR}"
-      _active_installations() { printf "%s|/tmp/p|/tmp/pol|/tmp/sd\n" "${_DT_TARGET}"; }
-      _deploy_desktop_entries > /dev/null
-    '
-}
-
-_dt_run flatpak
-_test "flatpak shadow exists"           test -f "${_dapp}/org.mozilla.firefox.desktop"
-_test "flatpak shadow Name=Firefox"     grep -qx 'Name=Firefox' "${_dapp}/org.mozilla.firefox.desktop"
-_test "flatpak shadow Exec"             grep -q -- '--target flatpak %u' "${_dapp}/org.mozilla.firefox.desktop"
-_test "flatpak shadow not hidden"       bash -c "! grep -qE '^(Hidden|NoDisplay)=true' '${_dapp}/org.mozilla.firefox.desktop'"
-_test "no hifox-flatpak alias"          bash -c "! test -f '${_dapp}/org.mozilla.firefox.hifox-flatpak.desktop'"
-_test "no hifox-standard alias"         bash -c "! test -f '${_dapp}/org.mozilla.firefox.hifox-standard.desktop'"
-for _wn in "${_webapps[@]}"; do
-  _wn_name=$(grep -m1 '^Name=' "${_dir}/webapp/${_wn}/${_wn}.desktop" | cut -d= -f2-)
-  _wtrack "${_wn}" _test "${_wn}: webapp .desktop exists"  test -f "${_dapp}/org.mozilla.firefox.${_wn}-web.desktop"
-  _wtrack "${_wn}" _test "${_wn}: no @-suffix"             bash -c "! test -f '${_dapp}/org.mozilla.firefox.${_wn}-web@flatpak.desktop'"
-  _wtrack "${_wn}" _test "${_wn}: Exec --target"           grep -q -- "--target flatpak --webapp ${_wn}" "${_dapp}/org.mozilla.firefox.${_wn}-web.desktop"
-  _wtrack "${_wn}" _test "${_wn}: Name=${_wn_name}"        grep -qx "Name=${_wn_name}" "${_dapp}/org.mozilla.firefox.${_wn}-web.desktop"
-done
-
-_dt_run standard
-_test "standard shadow exists"          test -f "${_dapp}/firefox.desktop"
-_test "standard shadow Exec"            grep -q -- '--target standard %u' "${_dapp}/firefox.desktop"
-_test "standard no flatpak-named entry" bash -c "! test -f '${_dapp}/org.mozilla.firefox.desktop'"
-
-echo ""
-echo "=== profiles.ini mutation ==="
-_rp="${_tmpdir}/rp"
-_sample_webapp="sample-webapp"
-_fresh_ini "${_rp}"
-_test "register appends new profile"  _in_deploy "_register_profile '${_rp}' '${_sample_webapp}'; grep -q '^Name=${_sample_webapp}$' '${_rp}/profiles.ini'"
-_test "register picks [Profile1]"     grep -qE '^\[Profile1\]$' "${_rp}/profiles.ini"
-_test "register Path matches name"    grep -qx "Path=${_sample_webapp}" "${_rp}/profiles.ini"
-
-_fresh_ini "${_rp}"
-_test "register idempotent" _in_deploy "
-  _register_profile '${_rp}' '${_sample_webapp}'
-  _register_profile '${_rp}' '${_sample_webapp}'
-  count=\$(grep -c '^Name=${_sample_webapp}$' '${_rp}/profiles.ini')
-  (( count == 1 ))
-"
-
-_fx="${_tmpdir}/fx"
-mkdir -p "${_fx}"
-cat > "${_fx}/profiles.ini" << 'EOF'
-[General]
-StartWithLastProfile=0
-
-[Profile0]
-Name=default
-IsRelative=1
-Path=aaa
-Default=1
-EOF
-_test "fix flips 0 to 1" _in_deploy "_fix_start_with_last_profile '${_fx}'; grep -q '^StartWithLastProfile=1$' '${_fx}/profiles.ini'"
-
-cat > "${_fx}/profiles.ini" << 'EOF'
-[General]
-StartWithLastProfile=1
-
-[Profile0]
-Name=default
-EOF
-_test "fix no-op when already 1" _in_deploy "
-  before=\$(sha256sum '${_fx}/profiles.ini')
-  _fix_start_with_last_profile '${_fx}'
-  after=\$(sha256sum '${_fx}/profiles.ini')
-  [[ \"\${before}\" == \"\${after}\" ]]
-"
-
-_test "watch.sh wires profiles.ini path" \
-  grep -q 'PathChanged=.*profiles.ini' "${_dir}/lib/watch.sh"
-
-echo ""
-echo "=== policies.json ==="
-_test "valid JSON"               python3 -c "import json,sys; json.load(open('${_dir}/config/policies.json'))"
-_test "blocks unknown extensions" _pol_q "d['policies']['ExtensionSettings']['*']['installation_mode']=='blocked'"
-_test "force-installs uBlock"     _pol_q "d['policies']['ExtensionSettings']['uBlock0@raymondhill.net']['installation_mode']=='force_installed'"
-_test "minimum TLS 1.2"           _pol_q "d['policies']['SSLVersionMin']=='tls1.2'"
-_test "disables safe mode"        _pol_q "d['policies']['DisableSafeMode']==True"
-_test "disables master password"  _pol_q "d['policies']['DisableMasterPasswordCreation']==True"
-
-echo ""
-echo "=== code patterns ==="
-for f in lib/purge.sh lib/clean.sh; do
-  _test "${f} uses \${var:?} on rm -rf" grep -qE 'rm -rf "\$\{[a-z_]+:\?\}' "${_dir}/${f}"
-done
-
-_test "deploy.sh trap rm tmp"        grep -q 'trap.*rm.*tmp.*EXIT'   "${_dir}/lib/deploy.sh"
-_test "systemconfig.sh trap rm stage" grep -q 'trap.*rm.*stage.*EXIT' "${_dir}/lib/systemconfig.sh"
-
-_test "deploy.sh keeps re-lock warn string" grep -q 're-lock failed' "${_dir}/lib/deploy.sh"
-_test "install case calls hifox_install_systemconfig" \
-  bash -c "awk '/^  install\\)/,/^    ;;/' '${_dir}/hifox.sh' | grep -q 'hifox_install_systemconfig'"
-
-_test "verify accepts deployed fixture"  _verify_fixture "${_tmpdir}/verify-pass"
-_test "verify rejects pref drift"        _verify_rejects_pref_drift "${_tmpdir}/verify-fail"
-_test "verify rejects unlocked pref"     _verify_rejects_unlocked_pref "${_tmpdir}/verify-unlocked"
-_test "verify flags webapp missing dump" _verify_flags_missing_webapp_dump "${_tmpdir}/verify-wdump"
-_test "verify writes per-target pref dumps" _verify_writes_per_target_dumps "${_tmpdir}/verify-dumps"
-
-_test "log brackets aligned" bash -c "
-  out=\$( { unset JOURNAL_STREAM; source '${_dir}/lib/base.sh'; log x; ok x; warn x; die x; } 2>&1 || true)
-  printf '%s\n' \"\${out}\" | awk '
-    match(\$0, /\\[[^]]+\\]/) {
-      tag = substr(\$0, RSTART, RLENGTH)
-      if (length(tag) != 7) exit 1
-      seen++
-    }
-    END { exit(seen == 4 ? 0 : 1) }
-  '
-"
-
-_test "verify checks reference real lockPrefs in global_lockprefs.cfg" bash -c '
-  # extract pref names from verify.sh checks array and assert each has a
-  # lockPref() entry in global_lockprefs.cfg. catches drift where someone
-  # changes a pref name in global without updating verify.
-  glb="$1/config/global_lockprefs.cfg"
-  vfy="$1/lib/verify.sh"
-  missing=0
-  while read -r key; do
-    [[ -n "${key}" ]] || continue
-    # _user_js.canary is set by user.js (verify checks it as a profile load
-    # marker), not by autoconfig lockPref - skip the lookup.
-    [[ "${key}" == _user_js.* ]] && continue
-    grep -qE "lockPref\\(\"${key}\"" "${glb}" \
-      || { echo "verify references pref not locked in global: ${key}"; missing=1; }
-  done < <(grep -oE "^[[:space:]]+'\''[a-z_][a-zA-Z0-9._-]+\\|" "${vfy}" \
-            | sed -E "s/^[[:space:]]+'\''//;s/\\|$//")
-  exit ${missing}
-' _ "${_dir}"
-
-_test "status flags chrome drift end-to-end" bash -c '
-  set -e
-  src="$1"
-  fix=$(mktemp -d)
-  trap "rm -rf \"${fix}\"" EXIT
-  mkdir -p "${fix}/.mozilla/firefox/abc.default-release/chrome"
-  mkdir -p "${fix}/.config/hifox"
-  cp "${src}/config/user.js" "${fix}/.mozilla/firefox/abc.default-release/user.js"
-  cp "${src}/config/hifox.css" "${fix}/.mozilla/firefox/abc.default-release/chrome/userContent.css"
-  cp "${src}/docs/hifox.png" "${fix}/.mozilla/firefox/abc.default-release/chrome/hifox.png"
-  printf "/* drift */\n" >> "${fix}/.mozilla/firefox/abc.default-release/chrome/userContent.css"
-  cat > "${fix}/.mozilla/firefox/profiles.ini" <<EOF
-[General]
-StartWithLastProfile=1
-[Profile0]
-Name=default
-IsRelative=1
-Path=abc.default-release
-Default=1
-EOF
-  echo standard > "${fix}/.config/hifox/target"
-
-  HOME="${fix}" XDG_CONFIG_HOME="${fix}/.config" bash -c "
-    source \"${src}/lib/base.sh\"
-    source \"${src}/lib/status.sh\"
-    _dir=\"${src}\"
-    _active_installations() { echo \"standard|\${HOME}/.mozilla/firefox|/tmp/_na/policies|/tmp/_na\"; }
-    hifox_status 2>&1
-  " | grep -qE "DRIFT userContent"
-' _ "${_dir}"
-
-_test "status reports chrome synced on pristine fixture" bash -c '
-  set -e
-  src="$1"
-  fix=$(mktemp -d)
-  trap "rm -rf \"${fix}\"" EXIT
-  mkdir -p "${fix}/.mozilla/firefox/abc.default-release/chrome"
-  mkdir -p "${fix}/.config/hifox"
-  cp "${src}/config/user.js" "${fix}/.mozilla/firefox/abc.default-release/user.js"
-  cp "${src}/config/hifox.css" "${fix}/.mozilla/firefox/abc.default-release/chrome/userContent.css"
-  cp "${src}/docs/hifox.png" "${fix}/.mozilla/firefox/abc.default-release/chrome/hifox.png"
-  cat > "${fix}/.mozilla/firefox/profiles.ini" <<EOF
-[General]
-StartWithLastProfile=1
-[Profile0]
-Name=default
-IsRelative=1
-Path=abc.default-release
-Default=1
-EOF
-  echo standard > "${fix}/.config/hifox/target"
-
-  HOME="${fix}" XDG_CONFIG_HOME="${fix}/.config" bash -c "
-    source \"${src}/lib/base.sh\"
-    source \"${src}/lib/status.sh\"
-    _dir=\"${src}\"
-    _active_installations() { echo \"standard|\${HOME}/.mozilla/firefox|/tmp/_na/policies|/tmp/_na\"; }
-    out=\$(hifox_status 2>&1)
-    printf %s \"\${out}\" | awk \"/chrome assets/{p=1;next}/policies.json|autoconfig.cfg/{p=0}p\" \
-      | grep -qE \"abc\\.default-release.*synced\" \
-      && ! ( printf %s \"\${out}\" | awk \"/chrome assets/{p=1;next}/policies.json|autoconfig.cfg/{p=0}p\" \
-              | grep -qE \"DRIFT\" )
-  "
-' _ "${_dir}"
-
-_test "no dead shell functions" bash -c '
-  files=("$@")
-  mapfile -t funcs < <(
-    grep -hE "^[A-Za-z_][A-Za-z0-9_]*\(\)" "${files[@]}" \
-      | sed -E "s/\(\).*//" \
-      | sort -u
-  )
-  for fn in "${funcs[@]}"; do
-    count=$(grep -hE "(^|[^A-Za-z0-9_])${fn}([^A-Za-z0-9_]|$)" "${files[@]}" | wc -l)
-    (( count > 1 )) || { printf "%s\n" "${fn}"; exit 1; }
-  done
-' _ "${_sh[@]}"
-
-if (( ${#_webapps[@]} > 0 )); then
-  _gen_fail=$(_in_base "_generate_autoconfig 2>/dev/null" >/dev/null 2>&1 && echo 0 || echo 1)
-  _gen_size=$(_in_base "_generate_autoconfig 2>/dev/null | wc -c" 2>/dev/null || echo 0)
-  _min_gen_size=$((
-    $(wc -c < "${_dir}/config/global_lockprefs.cfg") +
-    $(wc -c < "${_dir}/webapp/shared/webapp.cfg")
-  ))
-  echo ""
-  echo "=== webapp matrix ==="
-  if (( _gen_fail == 1 )) || (( _gen_size < _min_gen_size )); then
-    echo "  ! _generate_autoconfig broken (size=${_gen_size}, expected>=${_min_gen_size}) - 'injected' FAILs below are downstream"
-    for _wn in "${_webapps[@]}"; do
-      _t=$(( ${_wpass[${_wn}]:-0} + ${_wfail[${_wn}]:-0} ))
-      printf "  %-12s %d/%d  (generator)\n" "${_wn}:" "${_wpass[${_wn}]:-0}" "${_t}"
-    done
-  else
-    for _wn in "${_webapps[@]}"; do
-      _t=$(( ${_wpass[${_wn}]:-0} + ${_wfail[${_wn}]:-0} ))
-      if (( ${_wfail[${_wn}]:-0} == 0 )); then
-        printf "  %-12s %d/%d  ok\n" "${_wn}:" "${_wpass[${_wn}]:-0}" "${_t}"
-      else
-        printf "  %-12s %d/%d  FAIL\n" "${_wn}:" "${_wpass[${_wn}]:-0}" "${_t}"
-      fi
-    done
-  fi
-fi
-
-echo ""
-echo "==============================="
-echo "  PASS: ${_pass}  FAIL: ${_fail}"
-echo "==============================="
-
-[[ "${_fail}" -eq 0 ]]
+printf '\n===============================\n'
+printf '  PASS: %d  FAIL: %d\n' "${_pass}" "${_fail}"
+printf '===============================\n'
+(( _fail == 0 ))
