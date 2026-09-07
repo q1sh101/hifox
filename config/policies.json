@@ -32,6 +32,7 @@
     "DisableSafeMode": true,
     "DisableAccounts": true,
     "DisableRemoteImprovements": true,
+    "DisableSystemAddonUpdate": true,
 
     "UserMessaging": {
       "UrlbarInterventions": false,
