@@ -20,13 +20,16 @@ git clone https://github.com/q1sh101/hifox && cd hifox
 # standard Firefox
 bash hifox.sh install --standard
 
-# Flatpak Firefox
+# Flatpak Firefox - must be a per-user install; hifox writes its
+# systemconfig extension where only a --user installation reads it
+flatpak install --user flathub org.mozilla.firefox
 bash hifox.sh install --flatpak
 
 # hifox is single-target: install refuses if both Firefox targets are present.
 # install creates ~/.local/bin/hifox
-# launch Firefox once, close it, then launch again
-hifox verify  # stops Firefox if drift is detected
+# launch the main Firefox profile once, close it, then launch it again
+# do the same first-run/close/relaunch cycle once for every webapp profile you use
+hifox verify  # stops the selected target only for confirmed drift
 hifox status
 ```
 
@@ -41,7 +44,7 @@ hifox status
 ## what it does
 
 - Locks Firefox prefs with `lockPref()` so extensions, websites, and runtime code cannot override them.
-- Stops Firefox when deployed prefs or files drift from the repo.
+- Stops the selected Firefox target only when drift is proven; a missing or stale dump is reported as pending a restart, not as failure.
 - Turns Firefox updates into reviewable pref diffs through per-target `generated_pref_dump.<target>.txt`.
 - Runs webapps as isolated Firefox profiles with per-app unlocks for things like microphone, screen share, or DRM.
 - Treats the repo as the source of truth: edit config, save, deploy, verify.
@@ -51,16 +54,28 @@ hifox status
 ```text
 hifox install <--flatpak|--standard>          save target, deploy, install watchers
 hifox deploy                                  sync repo config to Firefox
-hifox verify                                  verify live state; stop Firefox on drift
+hifox verify                                  verify live state; stop selected target on confirmed drift
 hifox status                                  compare repo state with deployed state
-hifox clean                                   remove stale profile remnants
+hifox clean                                   remove stale remnants while Firefox is stopped
 hifox purge [--flatpak|--standard]            delete profile data after confirmation
 hifox logs                                    follow deploy and verify logs
 hifox watch install|remove|status             manage systemd file watchers
-hifox install-systemconfig                    register Flatpak systemconfig extension
+hifox install-systemconfig                    refresh Flatpak autoconfig + policies
 ```
 
 Before install creates the `hifox` command, use `bash hifox.sh <command>`.
+
+## development checks
+
+```bash
+bash tests/smoke.sh
+bash tests/integration_background.sh  # runs real processes in a throwaway HOME
+```
+
+## reviewing Firefox pref updates
+
+A Firefox update rewrites the baseline; read what changed with
+`git diff config/generated_pref_dump.<target>.txt` and commit when you accept it.
 
 ## files
 

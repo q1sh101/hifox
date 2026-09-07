@@ -2,7 +2,7 @@
 
 hifox enforces Firefox hardening from a repo, on both standard and Flatpak
 Firefox: prefs, policies, and profile files are deployed from source, runtime
-state is verified against the repo, and verify stops Firefox on drift. This document maps
+state is verified against the repo, and verify stops the selected target on confirmed drift. This document maps
 the deploy pipeline, verification, update detection, and webapp isolation. See
 [README.md](../README.md) for usage.
 
@@ -67,7 +67,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
                               ▼
   ┌─ integrity ───────────────────────────────────────────────────────┐
   │                                                                   │
-  │   verify        drift detected ──> stop Firefox ──> notify        │
+  │   verify        confirmed drift ──> stop selected target          │
   │                 before drift continues                            │
   │                                                                   │
   │   update        new pref appears in Firefox ──> diff ──> notify   │
@@ -95,9 +95,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
        │          └──────────┬──────────┘
        │                     ▼
        ├── save target ── ~/.config/hifox/target
-       ├── deploy
-       ├── watch install (systemd units)
-       └── symlink ── ~/.local/bin/hifox
+       ├── deploy (may refresh an already-active watcher)
+       ├── symlink ── ~/.local/bin/hifox
+       └── watch install (systemd units)
 ```
 
 ## generation
@@ -183,7 +183,8 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
        │
        ├── refresh watcher (if active ── picks up new dirs)
        │
-       └── auto-clean ──> remove remnants (skipped on failed deploy)
+       └── auto-clean ──> remove remnants only when Firefox is confirmed stopped
+                          (skipped on failed deploy, running target, or unknown state)
 
   lock flow:
 
@@ -197,41 +198,44 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 
   file ops: user-first ──> fail? ──> sudo -n fallback
             (for system dirs: /etc, /usr/lib, chattr)
+
+  lock: every mutating command takes one flock at dispatch, so a manual run and
+        a watcher-triggered one cannot overlap. verify and status do not take it.
 ```
 
 ## systemconfig (flatpak)
 
 ```
   flatpak Firefox runs sandboxed - configs on host /etc do not reach it.
-  Mozilla declares an extension point: org.mozilla.firefox.systemconfig
-  mounted as /app/etc/firefox inside the sandbox. hifox install --flatpak
-  auto-runs this step when Flatpak Builder is available; the command below is
-  the manual rerun.
+  Mozilla declares an unmaintained extension point:
+  org.mozilla.firefox.systemconfig, mounted as /app/etc/firefox inside the
+  sandbox. hifox resolves Firefox's installed branch and populates that
+  per-user extension directory directly during ordinary deploy. It does not
+  require Flatpak Builder or extension registration.
 
   hifox install-systemconfig
        │
        ├── flatpak Firefox required
        │
-       ├── detect runtime ── flatpak info org.mozilla.firefox
-       │                     (sdk version + branch, no hardcoding)
-       │
-       ├── stage ── ~/.cache/hifox-build.XXXX/
-       │              ├── manifest.yml         (org.mozilla.firefox.systemconfig)
-       │              └── content/
-       │                  ├── autoconfig.cfg   (generated)
-       │                  ├── autoconfig.js    (copy)
-       │                  └── policies.json    (copy)
-       │
-       ├── flatpak-builder ──> --user --install --force-clean
+       ├── detect branch ── flatpak info org.mozilla.firefox
+       ├── populate $XDG_DATA_HOME/flatpak/extension/
+       │       (defaults to ~/.local/share/flatpak/extension/)
+       │       org.mozilla.firefox.systemconfig/<arch>/<branch>/
+       │         ├── autoconfig.cfg
+       │         ├── defaults/pref/autoconfig.js
+       │         └── policies/policies.json
        │
        └── /app/etc/firefox now mounted inside sandbox
               ├── autoconfig.cfg
               ├── defaults/pref/autoconfig.js
               └── policies/policies.json
 
-  one-time per install. re-run after extension uninstall or Firefox runtime changes.
-  hifox deploy writes new content into the registered extension dir
-  without rebuild, so plain content edits do not require this command.
+       the explicit command then reads all three back from inside the sandbox
+       and fails if what Firefox sees differs from what was written.
+
+  ordinary hifox deploy writes the same extension directory. the explicit
+  command runs the same policies and autoconfig deploy steps and is not
+  required after each content edit.
 ```
 
 ## startup
@@ -263,7 +267,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │       │                                              │
   │       ▼                                              │
   │  pref dump ─────── enumerate all prefs               │
-  │                    write to profile                  │
+  │                    atomically publish in profile     │
   │                    (skip volatile timestamps)        │
   │                                                      │
   └──────────────────────────────────────────────────────┘
@@ -321,7 +325,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   └──────────────────────────┬───────────────────────────────┘
                              │
                       ┌──────┴──────┐
-                   pass          fail ──> stop Firefox + notify
+                   pass          nonzero
+                                   ├── confirmed drift -> stop selected target
+                                   └── unreadable evidence -> Firefox keeps running
 
   profile paths: only watched if profile exists at install time.
   30min timer covers the gap. deploy auto-refreshes watcher paths.
@@ -335,25 +341,23 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 ```
   hifox verify
        │
-       ├── no profile yet? ──> skip installation
-       │
-       ▼
-  wait for prefs.js (up to 15s)
-       │
-       ▼
+       ├── compare deployed files even when no default profile exists
+       └── default profile absent? runtime checks are not applicable
+
   ┌──────────────────────────────────────────────┐
   │  pref integrity (runtime dump)               │
   │                                              │
   │  single source per check:                    │
   │  generated_pref_dump.txt - what Firefox      │
   │  actually loaded this session                │
-  │  (stale dump ──> "staged, restart to apply") │
+  │  read as a frozen, validated snapshot        │
+  │  (stale or absent dump ──> pending)          │
   │                                              │
   │  canary, cookieBehavior, HTTPS-only,         │
   │  DRM, shutdown sanitization                  │
   │                                              │
-  │  webapp profiles: each app's prefs.cfg       │
-  │  compared against that profile's own dump    │
+  │  webapps: same checks, with prefs.cfg        │
+  │  overrides applied on top                    │
   └───────────────────┬──────────────────────────┘
                       ▼
   ┌──────────────────────────────────────────────┐
@@ -368,17 +372,21 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   ┌──────────────────────────────────────────────┐
   │  dump monitoring                             │
   │                                              │
-  │  profile dump ≠ repo dump?                   │
-  │       └── yes ──> cp to repo + notify        │
-  │                                              │
-  │  dump error? ──> fail                        │
+  │  after every applicable check passes:        │
+  │  profile dump ≠ reviewed repo baseline?      │
+  │       └── yes ──> refresh baseline + notify  │
+  │  git diff is the review step                 │
   └───────────────────┬──────────────────────────┘
                       ▼
-               ┌──────┴──────┐
-            pass          fail ──> stop Firefox + notify + exit
+     ┌──────────────┬────────────┴─────┬──────────────────┐
+  verified       pending           unreadable         confirmed drift
+  exit 0         restart Firefox   malformed dump     stop target
+                 exit 0            nonzero            notify + nonzero
 
-  pref checks: default dump + webapp dumps.  user.js diff: ALL profiles.
-  fail -> stop Firefox -> notify -> exit (run: hifox deploy).
+  A dump that is absent or older than the deployed config is not drift: hifox
+  names the profiles that still need a restart and exits 0. Only a malformed
+  dump, or one reporting its own error, counts as unreadable; only a value that
+  disagrees stops the browser.
 ```
 
 ## status
@@ -427,7 +435,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
                               └───────────────────────────────────┘
                                      │
                                      ▼
-                              stop Firefox + notify (critical)
+                              stop selected target + notify (critical)
                               user runs: hifox deploy -> restart
 ```
 
@@ -438,10 +446,10 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   add or change prefs - hifox diffs the full dump, catches meaningful changes,
   and notifies before the new state is accepted.
   (volatile prefs - timestamps, counters, settings cache - skipped for clean signal.)
-  Firefox writes generated_pref_dump.txt inside each profile; verify copies it
-  into config/generated_pref_dump.<target>.txt so standard and Flatpak baselines
-  never overwrite each other. fresh-profile first launch is skipped (no canary
-  yet); next launch dumps cleanly.
+  Firefox publishes generated_pref_dump.txt atomically inside each profile. Once
+  every applicable check passes, verify rewrites the per-target baseline and
+  notifies; git diff is the review step and commit is the acceptance. Fresh-
+  profile first launch is skipped (no canary yet); the next launch dumps cleanly.
 
   ┌─────────┐    ┌──────────────────┐     ┌──────────────────┐
   │ Firefox │    │  autoconfig.cfg  │     │     profile/     │
@@ -454,7 +462,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
                  │                                ▼│
                  │  profile dump ≠ repo dump? <───┘│
                  │       │                         │
-                 │       └── yes ──> cp to repo    │
+                 │       └── yes ──> refresh base  │
                  │                   + notify-send │
                  └────────────────┬────────────────┘
                                   │
@@ -471,7 +479,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 
   full cycle:
 
-  update ──> restart ──> dump ──> verify ──> repo ──> notify
+  update ──> restart ──> dump ──> verify ──> baseline ──> notify
                                                         │
                                               git diff <┘
                                                 │
@@ -636,7 +644,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
 
   ┌─────────────────────────────────────────────────────────────────┐
   │  clean                          │  purge                        │
-  │  safe, runs after deploy        │  destructive, interactive     │
+  │  known remnants, stopped target │  destructive, interactive     │
   ├─────────────────────────────────┼───────────────────────────────┤
   │  telemetry, crashes,            │  profile data: cookies,       │
   │  experiments, caches,           │  history, logins, sessions,   │
@@ -647,27 +655,31 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │                                 │  profiles.ini, installs.ini   │
   ├─────────────────────────────────┼───────────────────────────────┤
   │  no confirm needed              │  [y/N] confirm required       │
-  │  auto-runs at end of deploy     │  manual only                  │
+  │  attempted after deploy         │  manual only                  │
   └─────────────────────────────────┴───────────────────────────────┘
 
   hifox clean
-       └── for each profile: delete known remnant files
+       ├── running or unknown target state ──> refuse without mutation
+       └── stopped target ──> for each profile: delete known remnant files
+                              (gmp-* kept in webapp profiles)
 
   hifox purge [--flatpak|--standard]
        │
        ├── confirm ──── [y/N] (no piped input)
-       ├── stop Firefox
-       ├── pause verify watcher
+       ├── record + pause active verify watcher units; confirm each stopped
+       ├── stop only selected target(s); verify stopped before deletion
        │
        ├── per profile (main + webapps):
        │   delete profile data EXCEPT user.js + chrome/
        │
        ├── external data (whitelist what to KEEP, not what to delete):
-       │   flatpak: delete ~/.var/app/org.mozilla.firefox/* except config/
+       │   flatpak: delete external data except config/, .config/, .mozilla/
        │   standard: delete ~/.cache/mozilla/
        │
-       ├── /tmp: Browser Toolbox temp profiles
-       ├── resume verify watcher
+       ├── own leftover Firefox temp dirs under /tmp (owner-checked)
+       │
+       ├── restore exactly the prior watcher state on success, failure, INT, TERM
+       ├── report partial deletion or watcher recovery failure as nonzero
        │
        └── next: hifox deploy ──> hardening reapplied
 
@@ -717,7 +729,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │  generate_pref_dump.cfg                                          │
   │    generated_pref_dump.txt                       <── success     │
   │    generated_pref_dump.err                       <── failure     │
-  │    _hifox.pref_dump (pref)                       <── summary     │
+  │    _hifox.pref_count (line 1 of the dump)        <── summary     │
   │    _hifox.error.dump_setup (pref)                <── observer    │
   │                                                                  │
   │  user.js (profile load)                                          │
@@ -738,7 +750,7 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │  _autoconfig.error      ── diagnostic only (not checked)         │
   │  _hifox.ui_seeded       ── diagnostic only (not checked)         │
   │  _hifox.alpenglow_seeded ── diagnostic only (not checked)        │
-  │  _hifox.pref_dump       ── diagnostic only (not checked)         │
+  │  _hifox.pref_count      ── diagnostic only (not checked)         │
   │  _hifox.error.*         ── diagnostic only (visible in dump)     │
   └──────────────────────────────────────────────────────────────────┘
 ```
