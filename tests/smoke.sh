@@ -297,11 +297,11 @@ _verify_case() {
       ;;
     baseline-dirty)
       printf 'operator.note = keep\n' >> "${baseline}"; git -C "${repo}" add config/generated_pref_dump.flatpak.txt
-      printf 'runtime.new = true\n' >> "${dump}"; pattern='uncommitted changes - preserved'
+      printf 'runtime.new = true\n' >> "${dump}"; pattern='pref dump updated in repo'
       ;;
-    git-fail) printf 'runtime.new = true\n' >> "${dump}"; pattern='cannot be proven - preserved' ;;
+    git-fail) printf 'runtime.new = true\n' >> "${dump}"; pattern='pref dump updated in repo' ;;
     baseline-accept)
-      git -C "${repo}" add -A && git -C "${repo}" -c user.email=t@t -c user.name=t commit -qm base
+      git -C "${repo}" add -A && git -C "${repo}" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm base
       printf 'runtime.new = true [LOCKED]\n' >> "${dump}"
       ;;
     compare-error) pattern='UNREADABLE: policies.json comparison' ;;
@@ -358,7 +358,7 @@ _verify_case() {
   if ${expect_stop}; then [[ -e "${stop_marker}" ]] || return 1; else [[ ! -e "${stop_marker}" ]] || return 1; fi
   [[ -z "${pattern}" ]] || grep -q "${pattern}" "${log}" || return 1
   case "${mode}" in
-    baseline-missing|baseline-accept) cmp -s "${dump}" "${baseline}" ;;
+    baseline-missing|baseline-accept|baseline-dirty|git-fail) cmp -s "${dump}" "${baseline}" ;;
     *) [[ "${before}" == "$(sha256sum "${baseline}")" ]] ;;
   esac
 }
@@ -371,13 +371,9 @@ _verify_atomic_contract() {
   head() { command head "$@"; mv -f "${replacement}" "${source_file}"; }
   ! _verify_snapshot_dump "${source_file}" "${snapshot}" || return 1; unset -f head
 
-  # a baseline the operator changed must never be overwritten; a clean one must be
+  # the baseline is replaced atomically, leaving no temporary file behind
   src="${root}/runtime"; baseline="${root}/config.txt"; printf 'new\n' > "${src}"
-  git -C "${root}" init -q; printf 'operator\n' > "${baseline}"
-  rc=0; _verify_baseline_writable "${baseline}" || rc=$?
-  (( rc == 1 )) || return 1
-  git -C "${root}" add -A && git -C "${root}" -c user.email=t@t -c user.name=t commit -qm base
-  _verify_baseline_writable "${baseline}" || return 1
+  printf 'old\n' > "${baseline}"
   _verify_write_baseline "${src}" "${baseline}" || return 1
   cmp -s "${src}" "${baseline}" && [[ -z "$(find "${root}" -name 'config.txt.tmp.*')" ]]
 }
@@ -554,8 +550,8 @@ staged|staged deployment is pending, not failure
 no-profile|deployed files pass without a profile
 file-drift|deployed drift is enforced without a profile
 unsafe-default|unsafe profile declaration is unavailable
-baseline-dirty|operator baseline is preserved
-git-fail|unknown baseline state is preserved
+baseline-dirty|dirty baseline is still refreshed
+git-fail|baseline refresh does not depend on git
 compare-error|comparison failure is unavailable
 reader-error|profile reader failure is unavailable
 no-install|installation discovery failure does not stop a target

@@ -92,18 +92,6 @@ _verify_runtime_snapshot() {
   return 0
 }
 
-# git makes an accepted baseline reviewable; uncommitted edits are not, so keep them
-_verify_baseline_writable() {
-  local dst="$1" rel status
-  [[ ! -L "${dst}" ]] || return 3
-  [[ ! -e "${dst}" || -f "${dst}" ]] || return 3
-  git -C "${_dir}" rev-parse --is-inside-work-tree &>/dev/null || return 2
-  rel="${dst#"${_dir}"/}"
-  status=$(git -C "${_dir}" status --porcelain=v1 --untracked-files=all -- "${rel}" 2>/dev/null) \
-    || return 2
-  [[ -z "${status}" ]]
-}
-
 _verify_write_baseline() {
   local src="$1" dst="$2" tmp
   tmp=$(mktemp "${dst}.tmp.XXXXXX") || return 1
@@ -119,7 +107,8 @@ _verify_write_baseline() {
 _hifox_verify() {
   local verify_tmp
   verify_tmp=$(mktemp -d) || die "cannot create verification workspace"
-  trap 'rm -rf "${verify_tmp:?}"' EXIT
+  # ${verify_tmp:-} keeps the EXIT trap safe if the function-local is already gone
+  trap '[[ -n "${verify_tmp:-}" ]] && rm -rf "${verify_tmp}"' EXIT
 
   local installations
   installations=$(_active_installations) \
@@ -329,19 +318,17 @@ _hifox_verify() {
   done <<< "${installations}"
 
   if (( ${#all_confirmed[@]} == 0 && ${#all_unavailable[@]} == 0 )); then
-    local i writable_state
+    # the baseline is a generated artifact; git diff is the review step, not a lock
+    local i
     for ((i = 0; i < ${#baseline_sources[@]}; i++)); do
       cmp -s "${baseline_sources[i]}" "${baseline_destinations[i]}" 2>/dev/null && continue
-      writable_state=0
-      _verify_baseline_writable "${baseline_destinations[i]}" || writable_state=$?
-      case "${writable_state}" in
-        1) warn "${baseline_types[i]}: baseline has uncommitted changes - preserved"; continue ;;
-        2) warn "${baseline_types[i]}: baseline state cannot be proven - preserved"; continue ;;
-        3) warn "${baseline_types[i]}: baseline is not a plain file - preserved"; continue ;;
-      esac
+      local added removed
+      # LC_ALL=C on both sides: comm rejects locale-collated input under pipefail
+      added=$(LC_ALL=C comm -13 <(LC_ALL=C sort "${baseline_destinations[i]}" 2>/dev/null) <(LC_ALL=C sort "${baseline_sources[i]}") 2>/dev/null | wc -l) || added='?'
+      removed=$(LC_ALL=C comm -23 <(LC_ALL=C sort "${baseline_destinations[i]}" 2>/dev/null) <(LC_ALL=C sort "${baseline_sources[i]}") 2>/dev/null | wc -l) || removed='?'
       if _verify_write_baseline "${baseline_sources[i]}" "${baseline_destinations[i]}"; then
-        ok "${baseline_types[i]}: pref dump updated in repo"
-        notify-send "hifox: new prefs detected" \
+        ok "${baseline_types[i]}: pref dump updated in repo (+${added} / -${removed})"
+        notify-send "hifox: prefs changed (+${added} / -${removed})" \
           "git diff config/generated_pref_dump.${baseline_types[i]}.txt" 2>/dev/null || true
       else
         warn "${baseline_types[i]}: baseline update failed"
