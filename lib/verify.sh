@@ -247,7 +247,8 @@ _hifox_verify() {
     for wdir in "${_dir}/webapp"/*/; do
       [[ -d "${wdir}" ]] || continue
       wname=$(basename "${wdir}")
-      [[ "${wname}" == "shared" || ! -f "${wdir}/prefs.cfg" ]] && continue
+      [[ "${wname}" == "shared" ]] && continue
+      _is_valid_webapp_name "${wname}" || continue
       [[ -d "${pdir}/${wname}" ]] || continue
       # an unresolvable profile is not drift, so it must not stop the browser
       wprofile=$(_canonical_profile_path "${pdir}" "${pdir}/${wname}") || {
@@ -271,12 +272,14 @@ _hifox_verify() {
         4) pending+=("${wname}"); continue ;;
       esac
 
+      # prefs.cfg is optional: without it the webapp is held to the global checks
       local -A overrides=()
       local wkey wexp
       while IFS='|' read -r wkey wexp; do
         [[ -n "${wkey}" ]] || continue
         overrides["${wkey}"]="${wexp}"
-      done < <(sed -n 's/^lockPref("\([^"]*\)", *\(.*\));.*/\1|\2/p' "${wdir}/prefs.cfg")
+      done < <([[ -f "${wdir}/prefs.cfg" ]] \
+        && sed -n 's/^lockPref("\([^"]*\)", *\(.*\));.*/\1|\2/p' "${wdir}/prefs.cfg")
 
       local check key expected desc issue
       for check in "${checks[@]}"; do

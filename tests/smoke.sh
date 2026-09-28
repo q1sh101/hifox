@@ -313,7 +313,7 @@ _verify_case() {
       mkdir -p "${pdir}/discord"; printf 'user_pref("x", 1);\n' > "${pdir}/discord/prefs.js"
       pattern='awaiting a Firefox restart - discord'
       ;;
-    webapp-pass|webapp-error|webapp-drift)
+    webapp-pass|webapp-error|webapp-drift|webapp-bare)
       mkdir -p "${pdir}/discord"; cp "${repo}/config/user.js" "${pdir}/discord/user.js"
       printf 'user_pref("_user_js.canary", "hifox");\n' > "${pdir}/discord/prefs.js"
       _fake_webapp_dump discord > "${pdir}/discord/generated_pref_dump.txt"
@@ -324,6 +324,8 @@ _verify_case() {
         sed -i 's/^geo\.enabled = false \[LOCKED\]$/geo.enabled = true [LOCKED]/' \
           "${pdir}/discord/generated_pref_dump.txt"
         expect_stop=true; pattern='discord: geolocation disabled'
+      elif [[ "${mode}" == webapp-bare ]]; then
+        rm "${repo}/webapp/discord/prefs.cfg"; expect_stop=true; pattern='WRONG: discord: '
       fi
       ;;
     *) return 1 ;;
@@ -562,6 +564,7 @@ webapp-missing|initialized webapp without evidence is pending
 webapp-pass|webapp overrides compose with global checks
 webapp-error|webapp producer error does not stop target
 webapp-drift|webapp global drift stops selected target
+webapp-bare|webapp without prefs.cfg is held to global checks
 EOF
 _test "standard target publishes its own baseline" \
   _verify_case "${_tmpdir}/verify-standard" baseline-missing standard

@@ -384,9 +384,9 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
                  exit 0            nonzero            notify + nonzero
 
   A dump that is absent or older than the deployed config is not drift: hifox
-  names the profiles that still need a restart and exits 0. Only a malformed
-  dump, or one reporting its own error, counts as unreadable; only a value that
-  disagrees stops the browser.
+  names the profiles that still need a restart and exits 0. Evidence hifox
+  cannot trust counts as unreadable and leaves Firefox running; a wrong,
+  missing, or unlocked pref, or a changed deployed file, stops the browser.
 ```
 
 ## status
@@ -401,10 +401,10 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
            repo                          live
            ┌───────────────────┐         ┌───────────────────┐
            │                   │  cmp -s │                   │
-           │ user.js ──────────┼───vs───>│ managed profiles  │  ok/warn/fail
-           │ policies.json ────┼───vs───>│ policies dir      │  ok/warn/fail
-           │ autoconfig.cfg* ──┼───vs───>│ sysconfig dir     │  ok/warn/fail
-           │ chrome assets ────┼───vs───>│ profile chrome/   │  ok/warn/fail
+           │ user.js ──────────┼───vs───>│ managed profiles  │  ok/warn
+           │ policies.json ────┼───vs───>│ policies dir      │  ok/warn
+           │ autoconfig.cfg* ──┼───vs───>│ sysconfig dir     │  ok/warn
+           │ chrome assets ────┼───vs───>│ profile chrome/   │  ok/warn
            │                   │         │                   │
            └───────────────────┘         └───────────────────┘
            * regenerated on the fly (not a stored copy)
@@ -521,16 +521,18 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
         ▼
     desktop env             matches StartupWMClass --> taskbar shows <name>
 
-  per-webapp extension point:
+  hook points (if executable, launch.sh execs it instead of the default flow):
 
-    ${XDG_CONFIG_HOME}/hifox/hooks/webapp/<name>
-        if executable, launch.sh execs it instead of the default flow.
+    ${XDG_CONFIG_HOME}/hifox/hooks/webapp/<name>    one webapp
+    ${XDG_CONFIG_HOME}/hifox/hooks/main             main browser
         use for custom wrappers (firejail, bwrap, extra flags, ...).
 
   global wrapper override:
 
-    HIFOX_LAUNCHER=<cmd>     env var that wraps the main-browser exec
-                             (webapp paths skip this; use hooks instead).
+    HIFOX_LAUNCHER=<cmd>     env var that replaces the Firefox command for
+                             terminal launches of the main browser; <cmd>
+                             must start Firefox itself (menu entries and
+                             webapps skip it; hooks/main takes precedence).
 
   why not tabs or Electron:
 
@@ -737,12 +739,12 @@ the deploy pipeline, verification, update detection, and webapp isolation. See
   │                                                                  │
   └──────────────────────────────────────────────────────────────────┘
        │
-       │ writes prefs.js canary plus dump status files
+       │ writes generated_pref_dump.txt (canary included) or its .err
        ▼
   ┌──────────────────────────────────────────────────────────────────┐
   │  hifox verify (shell side)                                       │
   │                                                                  │
-  │  prefs.js ──> _user_js.canary == "hifox"?                        │
+  │  generated_pref_dump.txt ──> _user_js.canary == "hifox"?         │
   │  generated_pref_dump.err exists and has content?  (dump fail)    │
   │                                                                  │
   │  _autoconfig.loaded     ── diagnostic only (not checked)         │
