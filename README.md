@@ -96,4 +96,5 @@ webapp/<name>/prefs.cfg                       per-webapp permission overrides
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - full system map.
 - [Screenshot](docs/screenshot.png)
+- [github.com/q1sh101/adamas](https://github.com/q1sh101/adamas) - optional sandbox layer: hifox hardens Firefox inside, adamas confines the Flatpak process outside (plugs into `~/.config/hifox/hooks`).
 - [MIT License](LICENSE)

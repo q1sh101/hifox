@@ -283,6 +283,10 @@ _deploy_desktop_entries() {
     icon="firefox"
     [[ -f "${sdir}/browser/chrome/icons/default/default128.png" ]] && \
       icon="${sdir}/browser/chrome/icons/default/default128.png"
+  else
+    # flatpak exports are off the icon path until re-login; pin the absolute path
+    local fp_icon="${XDG_DATA_HOME:-${HOME}/.local/share}/flatpak/exports/share/icons/hicolor/128x128/apps/org.mozilla.firefox.png"
+    [[ -f "${fp_icon}" ]] && icon="${fp_icon}"
   fi
 
   mkdir -p "${desktop_dir}"
